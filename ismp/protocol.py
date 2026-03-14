@@ -79,15 +79,15 @@ class ISMPProtocol:
             "constraints": []
         }
 
-        # 提取动词
+        # 提取动词（支持中英文）
         intent_lower = intent.lower()
-        if "write" in intent_lower:
+        if any(kw in intent_lower for kw in ["write", "导出", "写入", "保存", "输出"]):
             result["verb"] = "write"
-        elif "read" in intent_lower:
+        elif any(kw in intent_lower for kw in ["read", "读取", "读入", "获取"]):
             result["verb"] = "read"
-        elif "execute" in intent_lower:
+        elif any(kw in intent_lower for kw in ["execute", "执行", "运行"]):
             result["verb"] = "execute"
-        elif "filter" in intent_lower:
+        elif any(kw in intent_lower for kw in ["filter", "过滤", "筛选"]):
             result["verb"] = "filter"
 
         # 提取目标
@@ -121,15 +121,15 @@ class ISMPProtocol:
         target = intent_vector["target"]
 
         if verb == "write" and object_type == "file":
-            skills.append(f"read_file(path='{target}')")
-            skills.append("filter_data()")
-            skills.append(f"write_file(path='{target}')")
+            skills.append("read_file")
+            skills.append("filter_data")
+            skills.append("write_file")
         elif verb == "read" and object_type == "file":
-            skills.append(f"read_file(path='{target}')")
+            skills.append("read_file")
         elif verb == "execute":
-            skills.append("execute_command()")
+            skills.append("execute_command")
         elif verb == "filter":
-            skills.append("filter_data()")
+            skills.append("filter_data")
 
         return skills
 
