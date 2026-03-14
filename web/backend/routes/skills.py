@@ -239,6 +239,9 @@ async def create_skill(
     except Exception:
         tags_list = []
 
+    if len(tags_list) > 10:
+        return err_response(4002, f"标签数量不能超过 10 个，当前 {len(tags_list)} 个")
+
     # 创建技能记录
     skill = Skill(
         name=name,
