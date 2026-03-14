@@ -59,3 +59,13 @@ node_modules/
 
 # Wasmtime 缓存
 .wasmtime/
+
+# 上传文件
+uploads/
+*.db
+*.db-journal
+
+# 临时文件
+.workbuddy/
+reports/
+docs/
