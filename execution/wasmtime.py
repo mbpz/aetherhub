@@ -1,6 +1,10 @@
 """Wasm 执行沙箱"""
 from typing import Dict, Any
-import wasmtime
+# wasmtime 为可选依赖，当前使用模拟执行模式
+try:
+    import wasmtime  # noqa: F401
+except ImportError:
+    wasmtime = None  # type: ignore
 
 
 class WasmtimeSandbox:

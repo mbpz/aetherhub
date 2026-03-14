@@ -67,8 +67,9 @@ class Z3Verifier:
         """
         # 模拟提取逻辑公式
         # 这里应该使用 Tree-sitter 解析 AST 并转换为数学公式
+        # 返回一个合法的 Bool 约束（path >= 0 作为占位恒真式）
         path_var = Int('path')
-        return path_var
+        return path_var >= 0
 
     def define_security_rules(self, constraints: List[str]):
         """
