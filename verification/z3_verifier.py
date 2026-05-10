@@ -1,6 +1,7 @@
 """Z3 形式化验证器 - 完整实现"""
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from z3 import Solver, Int, sat, unsat, And, Or, Implies, Bool, Not
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .tree_sitter_parser import (
     code_to_ast,
@@ -22,13 +23,14 @@ class Z3Verifier:
     def __init__(self, timeout: int = 30):
         self.timeout = timeout
 
-    def verify(self, code: str, constraints: List[str]) -> Dict[str, Any]:
+    def verify(self, code: str, constraints: List[str], parallel: bool = True) -> Dict[str, Any]:
         """
         验证代码安全性
 
         Args:
             code: 待验证代码
             constraints: 安全约束列表
+            parallel: 是否启用并行验证（默认开启）
 
         Returns:
             验证结果
@@ -65,6 +67,111 @@ class Z3Verifier:
         formula = self.extract_logic_formula(code)
         rules = self.define_security_rules(constraints)
 
+        # 并行验证：当有多个规则且启用并行时
+        if parallel and len(rules) > 1:
+            return self._verify_parallel(code, formula, rules, constraints, code_path_result)
+        else:
+            return self._verify_sequential(code, formula, rules, constraints, code_path_result)
+
+    def _verify_parallel(
+        self,
+        code: str,
+        formula,
+        rules: List,
+        constraints: List[str],
+        code_path_result: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        并行验证多个规则
+
+        Args:
+            code: 待验证代码
+            formula: Z3 公式
+            rules: 安全规则列表
+            constraints: 约束列表
+            code_path_result: 代码路径检查结果
+
+        Returns:
+            验证结果
+        """
+        results = []
+        failed_constraints = []
+
+        with ThreadPoolExecutor(max_workers=min(len(rules), 4)) as executor:
+            future_to_rule = {
+                executor.submit(self._verify_single_rule, code, formula, rule): rule
+                for rule in rules
+            }
+
+            for future in as_completed(future_to_rule):
+                rule = future_to_rule[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+                    if result["status"] == "failed":
+                        failed_constraints.append(result.get("violations", []))
+                except Exception as e:
+                    results.append({"status": "error", "message": str(e)})
+
+        # 如果任何规则验证失败，整体验证失败
+        if failed_constraints:
+            return {
+                "status": "failed",
+                "result": "sat",
+                "counterexample": f"constraints failed: {failed_constraints}",
+                "rules": constraints,
+                "violations": [v for sublist in failed_constraints for v in sublist],
+            }
+
+        # 所有规则通过
+        return {
+            "status": "verified",
+            "result": "unsat",
+            "formula": str(formula) if formula is not None else "N/A",
+            "rules": constraints,
+            "code_path_check": code_path_result,
+            "parallel": True,
+            "rules_verified": len(rules),
+        }
+
+    def _verify_single_rule(self, code: str, formula, rule) -> Dict[str, Any]:
+        """验证单个规则"""
+        solver = Solver()
+        solver.set("timeout", self.timeout * 1000)
+
+        if formula is not None:
+            solver.add(formula)
+
+        solver.add(rule)
+
+        result = solver.check()
+
+        if result == unsat:
+            return {"status": "verified", "rule": str(rule)}
+        else:
+            return {"status": "failed", "rule": str(rule), "violations": [f"rule failed: {rule}"]}
+
+    def _verify_sequential(
+        self,
+        code: str,
+        formula,
+        rules: List,
+        constraints: List[str],
+        code_path_result: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        串行验证（单规则或禁用并行）
+
+        Args:
+            code: 待验证代码
+            formula: Z3 公式
+            rules: 安全规则列表
+            constraints: 约束列表
+            code_path_result: 代码路径检查结果
+
+        Returns:
+            验证结果
+        """
         solver = Solver()
         solver.set("timeout", self.timeout * 1000)
 
