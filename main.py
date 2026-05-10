@@ -11,8 +11,8 @@ def main():
     """主函数"""
     print("🚀 AetherHub 启动中...")
 
-    # 初始化组件
-    codex = CodexEngine(model="codex-3.5")
+    # 初始化组件（Codex 使用 OpenAI gpt-4o 模型）
+    codex = CodexEngine(model="gpt-4o")
     z3 = Z3Verifier(timeout=30)
     wasm = WasmtimeSandbox(memory_limit_mb=16, time_limit_ms=5000)
 

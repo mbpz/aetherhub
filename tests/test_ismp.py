@@ -24,7 +24,7 @@ class TestISMP:
     def test_semantic_vectorization(self, ismp):
         """测试语义向量化"""
         intent = "将 /data/users.csv 导出"
-        vector = ismp.semantic_vectorization(intent)
+        vector = ismp.semantic.vectorize(intent)
 
         assert vector["verb"] == "write"
         assert vector["object"] == "file"
@@ -33,7 +33,7 @@ class TestISMP:
     def test_capability_mapping(self, ismp):
         """测试能力空间匹配"""
         vector = {"verb": "write", "object": "file", "target": "/tmp/data.txt"}
-        skills = ismp.capability_mapping(vector)
+        skills = ismp.capability.map_intent_to_skills(vector)
 
         assert "read_file" in skills
         assert "write_file" in skills
@@ -42,7 +42,7 @@ class TestISMP:
         """测试约束注入"""
         vector = {"object": "file", "target": "/etc/passwd"}
         code = "def process(): pass"
-        constraints = ismp.dynamic_constraint_injection(vector, code)
+        constraints = ismp.constraint.inject(vector, code)
 
         assert "file" in constraints["resource_type"]
         assert len(constraints["rules"]) > 0

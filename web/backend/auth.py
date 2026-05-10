@@ -106,6 +106,17 @@ def create_jwt(user_id: int) -> str:
     return pyjwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
 
+def create_refresh_token(user_id: int) -> str:
+    """生成 JWT 刷新令牌（有效期 30 天）"""
+    payload = {
+        "sub": str(user_id),
+        "iat": datetime.now(timezone.utc),
+        "exp": datetime.now(timezone.utc) + timedelta(days=30),
+        "type": "refresh",
+    }
+    return pyjwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+
+
 def decode_jwt(token: str) -> Optional[dict]:
     """解码 JWT Token，返回 payload 或 None"""
     try:
@@ -115,3 +126,68 @@ def decode_jwt(token: str) -> Optional[dict]:
         return None
     except pyjwt.InvalidTokenError:
         return None
+
+
+def decode_jwt_allow_expired(token: str) -> Optional[dict]:
+    """解码 JWT Token（允许过期），用于 refresh 流程"""
+    try:
+        payload = pyjwt.decode(
+            token,
+            JWT_SECRET_KEY,
+            algorithms=[JWT_ALGORITHM],
+            options={"verify_exp": False}
+        )
+        return payload
+    except pyjwt.InvalidTokenError:
+        return None
+
+
+def verify_refresh_token(token: str) -> Optional[int]:
+    """
+    验证刷新令牌，返回 user_id 或 None
+
+    刷新令牌有效期 30 天，仅限使用一次（使用后作废）
+    """
+    payload = decode_jwt_allow_expired(token)
+    if payload is None:
+        return None
+
+    # 检查是否是刷新令牌
+    if payload.get("type") != "refresh":
+        return None
+
+    # 检查是否已过期（30 天）
+    exp = payload.get("exp")
+    if exp and datetime.fromtimestamp(exp, tz=timezone.utc) < datetime.now(timezone.utc):
+        return None
+
+    user_id = payload.get("sub")
+    return int(user_id) if user_id else None
+
+
+# 刷新令牌黑名单（已使用的令牌）
+_refresh_token_blacklist = set()
+
+
+def invalidate_refresh_token(token: str):
+    """将刷新令牌加入黑名单（一次性使用）"""
+    _refresh_token_blacklist.add(token)
+
+
+def is_refresh_token_valid(token: str) -> bool:
+    """检查刷新令牌是否有效（未使用且未过期）"""
+    if token in _refresh_token_blacklist:
+        return False
+
+    payload = decode_jwt_allow_expired(token)
+    if payload is None:
+        return False
+
+    if payload.get("type") != "refresh":
+        return False
+
+    exp = payload.get("exp")
+    if exp and datetime.fromtimestamp(exp, tz=timezone.utc) < datetime.now(timezone.utc):
+        return False
+
+    return True

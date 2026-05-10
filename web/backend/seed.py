@@ -406,7 +406,7 @@ def seed():
     init_db()
     db = SessionLocal()
     try:
-        # 创建 seed 用户
+        # Create seed user
         user = db.query(User).filter(User.github_id == SEED_USER["github_id"]).first()
         if not user:
             user = User(**SEED_USER)
@@ -416,7 +416,7 @@ def seed():
         else:
             print(f"ℹ️  Seed user already exists: {user.login}")
 
-        # 创建 seed skills
+        # Create seed skills
         upload_base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
         for skill_data in SEED_SKILLS:
             existing = db.query(Skill).filter(Skill.name == skill_data["name"]).first()
@@ -463,6 +463,11 @@ def seed():
             print(f"✅ Created skill: {skill.name}")
 
         db.commit()
+
+        # Rebuild FTS index after seed data is inserted
+        from .database import rebuild_fts_index, engine
+        rebuild_fts_index(engine)
+
         print("\n🎉 Seed data initialized successfully!")
     except Exception as e:
         db.rollback()

@@ -10,10 +10,13 @@ from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import JSONResponse, FileResponse, PlainTextResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, text
+import numpy as np
 
 from ..deps import get_db, get_optional_user, require_user
-from ..models import Skill, SkillFile, SkillStar, User
+from ..models import Skill, SkillFile, SkillStar, User, SkillVersion
+from ..embeddings import text_to_embedding, cosine_similarity, rrf_fusion
+from ..database import engine, rebuild_fts_index
 
 router = APIRouter(prefix="/skills", tags=["skills"])
 
@@ -104,6 +107,155 @@ async def list_categories(db: Session = Depends(get_db)):
         ).count()
         result.append({"name": cat, "count": count})
     return ok(result)
+
+
+@router.get("/search")
+async def search_skills(
+    q: str = Query(default=None, min_length=1),
+    category: Optional[str] = Query(default=None),
+    tags: Optional[str] = Query(default=None),
+    sort: str = Query(default="relevance"),
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    """
+    混合搜索：结合 FTS5 关键词搜索 + 向量语义搜索，使用 RRF 融合
+
+    - q: 搜索查询字符串
+    - category: 可选分类过滤
+    - tags: 可选标签过滤（逗号分隔）
+    - sort: relevance | star_count | created_at（默认 relevance 使用 RRF 融合）
+    - page, size: 分页参数
+    """
+    if not q:
+        # No query, fall back to regular list
+        query = db.query(Skill).filter(Skill.is_public == True)
+        if category:
+            query = query.filter(Skill.category == category)
+        if tags:
+            for tag in tags.split(","):
+                tag = tag.strip()
+                if tag:
+                    query = query.filter(Skill.tags.contains(tag))
+
+        total = query.count()
+        offset = (page - 1) * size
+        skills = query.order_by(Skill.created_at.desc()).offset(offset).limit(size).all()
+        pages = math.ceil(total / size) if size else 1
+        return ok({
+            "total": total,
+            "page": page,
+            "size": size,
+            "pages": pages,
+            "items": [s.to_dict() for s in skills],
+        })
+
+    # Build base query for filters
+    base_query = db.query(Skill.id).filter(Skill.is_public == True)
+    if category:
+        base_query = base_query.filter(Skill.category == category)
+    if tags:
+        for tag in tags.split(","):
+            tag = tag.strip()
+            if tag:
+                base_query = base_query.filter(Skill.tags.contains(tag))
+
+    # Get IDs that match filters
+    filter_ids = [r[0] for r in base_query.all()]
+
+    # 1. FTS5 keyword search
+    fts_results = []
+    with engine.connect() as conn:
+        fts_query = text("""
+            SELECT skill_id, name, description, tags FROM skills_fts
+            WHERE skills_fts MATCH :query
+        """)
+        try:
+            fts_results_raw = conn.execute(fts_query, {"query": q}).fetchall()
+            # Score based on BM25
+            for row in fts_results_raw:
+                skill_id = row[0]
+                name_text = row[1] or ""
+                desc_text = row[2] or ""
+                tags_text = row[3] or ""
+                # Simple scoring: exact match in name > description > tags
+                score = 0.0
+                q_lower = q.lower()
+                if q_lower in name_text.lower():
+                    score += 10.0
+                if q_lower in desc_text.lower():
+                    score += 5.0
+                if q_lower in tags_text.lower():
+                    score += 3.0
+                fts_results.append((skill_id, score))
+        except Exception:
+            # If FTS query fails, fall back to LIKE
+            like_query = db.query(Skill).filter(
+                Skill.is_public == True,
+                or_(
+                    Skill.name.ilike(f"%{q}%"),
+                    Skill.description.ilike(f"%{q}%"),
+                )
+            )
+            if category:
+                like_query = like_query.filter(Skill.category == category)
+            fts_results = [(s.id, 1.0) for s in like_query.all()]
+
+    # 2. Vector semantic search (if embeddings exist)
+    vector_results = []
+    query_embedding = None
+    try:
+        query_embedding = text_to_embedding(q)
+    except Exception:
+        query_embedding = None
+
+    if query_embedding is not None and filter_ids:
+        # Get skills with embeddings that pass filters
+        skills_with_embeddings = db.query(Skill).filter(
+            Skill.is_public == True,
+            Skill.embedding != None,
+            Skill.id.in_(filter_ids) if filter_ids else True,
+        ).all()
+
+        for skill in skills_with_embeddings:
+            try:
+                sim = cosine_similarity(query_embedding, skill.embedding)
+                vector_results.append((skill.id, sim))
+            except Exception:
+                pass
+
+    # 3. RRF Fusion
+    # Sort both result lists by score
+    fts_sorted = sorted(fts_results, key=lambda x: x[1], reverse=True)
+    vector_sorted = sorted(vector_results, key=lambda x: x[1], reverse=True)
+
+    # RRF fusion
+    fused = rrf_fusion([fts_sorted, vector_sorted])
+    fused_ids = [item[0] for item in fused]
+
+    # Build final results maintaining RRF order, then apply pagination
+    total = len(fused_ids)
+    offset = (page - 1) * size
+    page_ids = fused_ids[offset:offset + size]
+
+    # Fetch skills by order
+    if page_ids:
+        skills_ordered = db.query(Skill).filter(Skill.id.in_(page_ids)).all()
+        # Maintain order from fused_ids
+        skills_map = {s.id: s for s in skills_ordered}
+        ordered_skills = [skills_map[sid] for sid in page_ids if sid in skills_map]
+    else:
+        ordered_skills = []
+
+    pages = math.ceil(total / size) if size else 1
+    return ok({
+        "total": total,
+        "page": page,
+        "size": size,
+        "pages": pages,
+        "items": [s.to_dict() for s in ordered_skills],
+    })
 
 
 @router.get("/mine")
@@ -295,6 +447,9 @@ async def create_skill(
     db.commit()
     db.refresh(skill)
 
+    # Rebuild FTS index to include new skill
+    rebuild_fts_index(engine)
+
     return ok({
         "id": skill.id,
         "name": skill.name,
@@ -326,16 +481,21 @@ async def delete_skill(
 
     db.delete(skill)
     db.commit()
+
+    # Rebuild FTS index after deletion
+    rebuild_fts_index(engine)
+
     return ok(None, "Skill deleted successfully")
 
 
 @router.post("/{skill_id}/star")
 async def star_skill(
     skill_id: int,
+    rating: Optional[int] = Form(default=None, ge=1, le=10),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_user),
 ):
-    """Star 技能"""
+    """Star 技能（可选带评分 1-10）"""
     skill = db.query(Skill).filter(Skill.id == skill_id).first()
     if not skill:
         return err_response(4004, "Skill not found", 404)
@@ -346,15 +506,24 @@ async def star_skill(
     ).first()
 
     if existing:
-        return ok({"star_count": skill.star_count, "is_starred": True}, "Already starred")
+        # Update rating if provided
+        if rating is not None and existing.rating is None:
+            existing.rating = rating
+            skill.rating_sum = (skill.rating_sum or 0) + rating
+            skill.rating_count = (skill.rating_count or 0) + 1
+            db.commit()
+        return ok({"star_count": skill.star_count, "is_starred": True, "rating": existing.rating}, "Already starred")
 
-    star = SkillStar(user_id=current_user.id, skill_id=skill_id)
+    star = SkillStar(user_id=current_user.id, skill_id=skill_id, rating=rating)
     db.add(star)
     skill.star_count = (skill.star_count or 0) + 1
+    if rating is not None:
+        skill.rating_sum = (skill.rating_sum or 0) + rating
+        skill.rating_count = (skill.rating_count or 0) + 1
     db.commit()
     db.refresh(skill)
 
-    return ok({"star_count": skill.star_count, "is_starred": True}, "Starred successfully")
+    return ok({"star_count": skill.star_count, "is_starred": True, "rating": rating}, "Starred successfully")
 
 
 @router.delete("/{skill_id}/star")
@@ -380,6 +549,166 @@ async def unstar_skill(
         db.refresh(skill)
 
     return ok({"star_count": skill.star_count, "is_starred": False}, "Unstarred successfully")
+
+
+@router.get("/{skill_id}/ratings")
+async def get_skill_ratings(
+    skill_id: int,
+    db: Session = Depends(get_db),
+):
+    """获取技能评分统计"""
+    skill = db.query(Skill).filter(Skill.id == skill_id).first()
+    if not skill:
+        return err_response(4004, "Skill not found", 404)
+
+    return ok({
+        "average_rating": skill.average_rating,
+        "rating_count": skill.rating_count,
+        "star_count": skill.star_count,
+    })
+
+
+@router.get("/{skill_id}/versions")
+async def list_skill_versions(
+    skill_id: int,
+    db: Session = Depends(get_db),
+):
+    """获取技能版本历史"""
+    skill = db.query(Skill).filter(Skill.id == skill_id).first()
+    if not skill:
+        return err_response(4004, "Skill not found", 404)
+
+    versions = db.query(SkillVersion).filter(
+        SkillVersion.skill_id == skill_id
+    ).order_by(SkillVersion.created_at.desc()).all()
+
+    return ok([v.to_dict() for v in versions])
+
+
+@router.get("/{skill_id}/versions/{version}")
+async def get_skill_version(
+    skill_id: int,
+    version: str,
+    db: Session = Depends(get_db),
+):
+    """获取技能特定版本详情"""
+    skill = db.query(Skill).filter(Skill.id == skill_id).first()
+    if not skill:
+        return err_response(4004, "Skill not found", 404)
+
+    skill_version = db.query(SkillVersion).filter(
+        SkillVersion.skill_id == skill_id,
+        SkillVersion.version == version,
+    ).first()
+    if not skill_version:
+        return err_response(4004, "Version not found", 404)
+
+    return ok(skill_version.to_dict())
+
+
+@router.post("/{skill_id}/versions")
+async def create_skill_version(
+    skill_id: int,
+    version: str = Form(...),
+    description: Optional[str] = Form(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    """创建新技能版本（需鉴权，仅限作者）"""
+    skill = db.query(Skill).filter(Skill.id == skill_id).first()
+    if not skill:
+        return err_response(4004, "Skill not found", 404)
+    if skill.author_id != current_user.id:
+        return err_response(4003, "Forbidden: You can only update your own skills", 403)
+
+    # 版本号格式校验
+    if not re.match(r"^\d+\.\d+\.\d+$", version):
+        return err_response(4002, "版本号格式应为 x.y.z，如 1.0.0")
+
+    # 检查版本是否已存在
+    existing = db.query(SkillVersion).filter(
+        SkillVersion.skill_id == skill_id,
+        SkillVersion.version == version,
+    ).first()
+    if existing:
+        return err_response(4009, f"Version {version} already exists")
+
+    # 获取当前代码内容快照
+    code_content = skill.skill_md or ""
+    for f in skill.files:
+        try:
+            with open(f.file_path, "r", encoding="utf-8") as fp:
+                code_content += f"\n\n# File: {f.filename}\n" + fp.read()
+        except Exception:
+            pass
+
+    # 创建版本记录
+    skill_version = SkillVersion(
+        skill_id=skill_id,
+        version=version,
+        description=description,
+        code_content=code_content,
+        created_by=current_user.id,
+    )
+    db.add(skill_version)
+
+    # 更新技能版本号
+    skill.version = version
+    db.commit()
+    db.refresh(skill)
+
+    return ok({"id": skill_version.id, "version": skill_version.version}, "Version created successfully")
+
+
+@router.get("/{skill_id}/analytics")
+async def get_skill_analytics(
+    skill_id: int,
+    db: Session = Depends(get_db),
+):
+    """获取技能分析数据"""
+    skill = db.query(Skill).filter(Skill.id == skill_id).first()
+    if not skill:
+        return err_response(4004, "Skill not found", 404)
+
+    return ok({
+        "view_count": skill.view_count,
+        "download_count": skill.download_count,
+        "star_count": skill.star_count,
+        "average_rating": skill.average_rating,
+        "rating_count": skill.rating_count,
+    })
+
+
+@router.get("/analytics/leaderboard")
+async def get_leaderboard(
+    period: str = Query(default="week", pattern="^(week|month|all)$"),
+    limit: int = Query(default=10, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    """获取技能排行榜"""
+    query = db.query(Skill).filter(Skill.is_public == True)
+
+    # Sort by a composite score
+    from sqlalchemy import case
+    query = query.order_by(
+        (Skill.star_count * 3 + Skill.download_count * 2 + Skill.view_count).desc()
+    )
+
+    skills = query.limit(limit).all()
+    return ok([{
+        "id": s.id,
+        "name": s.name,
+        "description": s.description,
+        "category": s.category,
+        "star_count": s.star_count,
+        "download_count": s.download_count,
+        "view_count": s.view_count,
+        "average_rating": s.average_rating,
+        "author": {
+            "login": s.author.login,
+            "avatar_url": s.author.avatar_url,
+        } if s.author else None,
+    } for s in skills])
 
 
 def _guess_mime(filename: str) -> str:

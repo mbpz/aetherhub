@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .database import init_db
 from .routes import auth as auth_router
 from .routes import skills as skills_router
+from .routes import a2a as a2a_router
 
 
 @asynccontextmanager
@@ -48,6 +49,7 @@ app.add_middleware(
 # 注册路由
 app.include_router(auth_router.router, prefix="/api/v1")
 app.include_router(skills_router.router, prefix="/api/v1")
+app.include_router(a2a_router.router, prefix="/api/v1")
 
 
 @app.get("/")

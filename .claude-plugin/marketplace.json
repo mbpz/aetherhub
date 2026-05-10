@@ -1,0 +1,20 @@
+{
+  "name": "aetherhub",
+  "version": "1.0.0",
+  "description": "AetherHub Skill Marketplace - Discover, search, and execute skills from the AetherHub marketplace directly within Claude Code",
+  "homepage": "https://github.com/aetherhub/aetherhub",
+  "author": "AetherHub Team",
+  "tags": ["skill-marketplace", "ai-tools", "code-execution", "capability-discovery"],
+  "skills": [
+    {
+      "name": "aetherhub-discover",
+      "description": "Search and discover skills from AetherHub marketplace. Use when user wants to find a skill for a specific task.",
+      "trigger": ["find skill", "search skills", "discover skill", "skill marketplace", "look for skill", "need a skill for"]
+    },
+    {
+      "name": "aetherhub-execute",
+      "description": "Execute a skill from AetherHub marketplace on the current codebase. Use when user wants to apply a skill to their project.",
+      "trigger": ["execute skill", "run skill", "apply skill", "use skill from aetherhub"]
+    }
+  ]
+}

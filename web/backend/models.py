@@ -5,7 +5,7 @@ import json
 from datetime import datetime
 from sqlalchemy import (
     Column, Integer, String, Text, Boolean, DateTime,
-    ForeignKey, UniqueConstraint, create_engine
+    ForeignKey, UniqueConstraint, create_engine, LargeBinary
 )
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 from sqlalchemy.sql import func
@@ -59,18 +59,29 @@ class Skill(Base):
     author_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     download_count = Column(Integer, default=0)
     star_count = Column(Integer, default=0)
+    view_count = Column(Integer, default=0)
+    rating_sum = Column(Integer, default=0)  # sum of all ratings (1-10)
+    rating_count = Column(Integer, default=0)  # number of ratings
+    embedding = Column(LargeBinary, nullable=True)  # vector embedding as BLOB
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
     author = relationship("User", back_populates="skills")
     files = relationship("SkillFile", back_populates="skill", cascade="all, delete-orphan")
     stars = relationship("SkillStar", back_populates="skill", cascade="all, delete-orphan")
+    versions = relationship("SkillVersion", back_populates="skill", cascade="all, delete-orphan")
 
     def get_tags(self):
         try:
             return json.loads(self.tags) if self.tags else []
         except Exception:
             return []
+
+    @property
+    def average_rating(self):
+        if self.rating_count == 0:
+            return None
+        return round(self.rating_sum / self.rating_count, 1)
 
     def to_dict(self, include_author=True):
         d = {
@@ -83,6 +94,9 @@ class Skill(Base):
             "is_public": self.is_public,
             "star_count": self.star_count,
             "download_count": self.download_count,
+            "view_count": self.view_count,
+            "average_rating": self.average_rating,
+            "rating_count": self.rating_count,
             "created_at": self.created_at.isoformat() + "Z" if self.created_at else None,
             "updated_at": self.updated_at.isoformat() + "Z" if self.updated_at else None,
         }
@@ -135,6 +149,7 @@ class SkillStar(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     skill_id = Column(Integer, ForeignKey("skills.id"), nullable=False)
+    rating = Column(Integer, nullable=True)  # 1-10 rating, optional
     created_at = Column(DateTime, default=func.now())
 
     user = relationship("User", back_populates="stars")
@@ -143,6 +158,36 @@ class SkillStar(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "skill_id", name="uq_user_skill_star"),
     )
+
+
+class SkillVersion(Base):
+    """技能版本历史表"""
+    __tablename__ = "skill_versions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    skill_id = Column(Integer, ForeignKey("skills.id"), nullable=False)
+    version = Column(String(50), nullable=False)
+    description = Column(Text)
+    code_content = Column(Text)  # 代码快照
+    created_at = Column(DateTime, default=func.now())
+    created_by = Column(Integer, ForeignKey("users.id"))
+
+    skill = relationship("Skill", back_populates="versions")
+    creator = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint("skill_id", "version", name="uq_skill_version"),
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "skill_id": self.skill_id,
+            "version": self.version,
+            "description": self.description,
+            "created_at": self.created_at.isoformat() + "Z" if self.created_at else None,
+            "created_by": self.created_by,
+        }
 
 
 def get_engine(database_url: str):

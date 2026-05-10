@@ -81,6 +81,9 @@ except Exception as e:
     print(f"  ❌ 登录失败: {e}")
     sys.exit(2)
 
+import time
+ts = int(time.time())
+
 # Case 1: 11 个标签 → 应返回 400
 print("\n[Case 1] 提交 11 个标签（超限，预期 400）...")
 tags_11 = json.dumps([f"tag{i}" for i in range(1, 12)])
@@ -88,7 +91,7 @@ resp = requests.post(
     f"{BASE}/skills",
     headers=headers,
     data={
-        "name": "tc0518-eleven-tags",
+        "name": f"tc0518-eleven-tags-{ts}",
         "version": "1.0.0",
         "description": "Tag limit test with 11 tags",
         "category": "utility",
@@ -119,7 +122,7 @@ resp2 = requests.post(
     f"{BASE}/skills",
     headers=headers,
     data={
-        "name": "tc0518-ten-tags",
+        "name": f"tc0518-ten-tags-{ts}",
         "version": "1.0.0",
         "description": "Tag limit test with exactly 10 tags",
         "category": "utility",
@@ -144,7 +147,7 @@ resp3 = requests.post(
     f"{BASE}/skills",
     headers=headers,
     data={
-        "name": "tc0518-zero-tags",
+        "name": f"tc0518-zero-tags-{ts}",
         "version": "1.0.0",
         "description": "Tag limit test with 0 tags",
         "category": "utility",

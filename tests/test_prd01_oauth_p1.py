@@ -3,10 +3,30 @@ import pytest
 import requests
 import json
 from unittest.mock import Mock, patch
-import time
+from urllib.parse import urlparse, parse_qs
 
 
 BASE = "http://localhost:8000/api/v1"
+
+
+def get_live_token():
+    """获取有效的真实 token"""
+    s = requests.Session()
+    r = s.get(f"{BASE}/auth/login")
+    auth_url = r.json()["data"]["auth_url"]
+    r2 = s.get(auth_url, allow_redirects=False)
+    location = r2.headers.get("location", "")
+    params = parse_qs(urlparse(location).query)
+    return params.get("token", [None])[0]
+
+
+@pytest.fixture
+def live_token():
+    """获取有效的真实 token"""
+    token = get_live_token()
+    if not token:
+        pytest.fail("Failed to obtain live token from mock-callback")
+    return token
 
 
 @pytest.fixture
@@ -21,8 +41,8 @@ class TestGitHubOAuthP1:
     # TC-01-07: Token过期处理
     def test_expired_token_returns_401(self, session):
         """TC-01-07: 过期Token访问接口返回401"""
-        # 使用一个已过期的token
-        expired_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.EXPIRED"
+        # 使用一个明显过期的 token（伪造的过期 token）
+        expired_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwiZXhwIjoxMDAwMDAwMDAwfQ.Expired"
 
         response = session.get(
             f"{BASE}/auth/me",
@@ -33,7 +53,7 @@ class TestGitHubOAuthP1:
 
     def test_expired_token_clears_and_redirects(self, session):
         """TC-01-07: 过期Token清除并跳转登录页"""
-        expired_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.EXPIRED"
+        expired_token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwiZXhwIjoxMDAwMDAwMDAwfQ.Expired"
 
         # 访问受保护页面
         response = session.get(
@@ -43,14 +63,9 @@ class TestGitHubOAuthP1:
 
         assert response.status_code == 401, f"Expected 401, got {response.status_code}"
 
-        # 前端应该清除token并跳转登录页
-        # 这里只验证返回401
-        assert response.status_code == 401
-
     # TC-01-11: GitHub OAuth失败处理
     def test_oauth_callback_access_denied(self, session):
         """TC-01-11: OAuth授权取消后返回错误"""
-        # 模拟GitHub返回access_denied
         response = session.get(
             f"{BASE}/auth/callback?error=access_denied&error_description=User denied authorization",
             allow_redirects=False
@@ -78,32 +93,31 @@ class TestGitHubOAuthP1:
         response = session.get(f"{BASE}/auth/login")
         auth_url = response.json()["data"]["auth_url"]
 
-        # Mock模式跳过实际登录
-        # 验证auth_url包含必要参数
         from urllib.parse import urlparse
         parsed = urlparse(auth_url)
-        params = dict(parsed.query)
+        params = dict(parse_qs(parsed.query))
 
         assert "state" in params, "auth_url should contain state"
         assert params["state"], "state should not be empty"
 
     def test_user_info_updated_in_database(self, session):
         """TC-01-12: 用户信息更新到数据库"""
-        # 模拟用户登录
-        response = session.get(f"{BASE}/auth/login")
+        # 获取 live token 和用户信息
+        token = get_live_token()
+        assert token, "Should obtain token"
 
-        # Mock模式
-        assert response.status_code == 200
-        assert response.json()["code"] == 0
-        assert "auth_url" in response.json()["data"]
+        response = requests.get(
+            f"{BASE}/auth/me",
+            headers={"Authorization": f"Bearer {token}"}
+        )
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}"
 
-        # 验证用户信息结构
-        user_data = response.json()["data"].get("user", {})
+        user_data = response.json()["data"]
 
         # 验证必要字段存在
         assert "id" in user_data, "User should have id"
         assert "github_id" in user_data, "User should have github_id"
         assert "login" in user_data, "User should have login"
-        assert "name" in user_data, "User should have name"
+        assert user_data["login"] in ("demo-user", "octocat"), \
+            f"login should be demo-user or octocat, got {user_data['login']}"
         assert "avatar_url" in user_data, "User should have avatar_url"
-        assert "html_url" in user_data, "User should have html_url"

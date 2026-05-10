@@ -19,7 +19,7 @@ def test_semantic_vectorization():
     ismp = ISMPProtocol(codex, None, z3)
 
     intent = "将 /data/users.csv 导出"
-    vector = ismp.semantic_vectorization(intent)
+    vector = ismp.semantic.vectorize(intent)
 
     assert vector["verb"] == "write", f"期望 verb='write'，得到 '{vector['verb']}'"
     assert vector["object"] == "file", f"期望 object='file'，得到 '{vector['object']}'"
@@ -37,7 +37,7 @@ def test_capability_mapping():
     ismp = ISMPProtocol(codex, None, z3)
 
     vector = {"verb": "write", "object": "file", "target": "/tmp/data.txt"}
-    skills = ismp.capability_mapping(vector)
+    skills = ismp.capability.map_intent_to_skills(vector)
 
     assert "read_file" in skills, f"期望 'read_file' 在技能列表中"
     assert "write_file" in skills, f"期望 'write_file' 在技能列表中"
@@ -55,7 +55,7 @@ def test_constraint_injection():
 
     vector = {"object": "file", "target": "/etc/passwd"}
     code = "def process(): pass"
-    constraints = ismp.dynamic_constraint_injection(vector, code)
+    constraints = ismp.constraint.inject(vector, code)
 
     assert "file" in constraints["resource_type"], f"期望 resource_type='file'，得到 '{constraints['resource_type']}'"
     assert len(constraints["rules"]) > 0, f"期望规则数 > 0，得到 {len(constraints['rules'])}"
@@ -125,11 +125,11 @@ def test_edge_cases():
     ismp = ISMPProtocol(codex, None, z3)
 
     # 测试空意图
-    vector = ismp.semantic_vectorization("")
+    vector = ismp.semantic.vectorize("")
     assert vector["verb"] == "unknown", f"期望 verb='unknown'，得到 '{vector['verb']}'"
 
     # 测试无目标意图
-    vector = ismp.semantic_vectorization("导出数据")
+    vector = ismp.semantic.vectorize("导出数据")
     assert vector["object"] == "unknown", f"期望 object='unknown'，得到 '{vector['object']}'"
 
     print("   ✅ 通过")

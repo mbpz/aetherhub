@@ -5,6 +5,8 @@ z3-solver==4.12.6
 tree-sitter==0.20.4
 wasmtime==16.0.0
 python-dotenv==1.0.0
+sentence-transformers==2.2.2  # for vector embeddings
+numpy==1.24.3  # required by sentence-transformers
 
 # 开发依赖
 pytest==7.4.3
