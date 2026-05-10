@@ -11,7 +11,9 @@ from ..models import User
 from ..auth import (
     generate_oauth_url, validate_state,
     exchange_code_for_token, get_github_user,
-    create_jwt, is_mock_mode
+    create_jwt, is_mock_mode,
+    verify_refresh_token, create_refresh_token,
+    invalidate_refresh_token, is_refresh_token_blacklisted
 )
 from ..middleware import log_audit
 
@@ -147,6 +149,41 @@ async def mock_callback(
     return RedirectResponse(
         url=f"{FRONTEND_URL}/auth/callback?token={token}"
     )
+
+
+@router.post("/refresh")
+async def refresh_token(
+    refresh_token: str,
+    db: Session = Depends(get_db),
+):
+    """刷新访问令牌（使用刷新令牌获取新的访问令牌）"""
+    # 检查令牌是否已黑名单
+    if is_refresh_token_blacklisted(refresh_token):
+        return err(4003, "Token has been invalidated")
+
+    # 验证刷新令牌
+    user_id = verify_refresh_token(refresh_token)
+    if not user_id:
+        return err(4003, "Invalid or expired refresh token")
+
+    # 获取用户
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return err(4004, "User not found")
+
+    # 将旧刷新令牌加入黑名单（token rotation）
+    invalidate_refresh_token(refresh_token)
+
+    # 生成新的访问令牌
+    new_access_token = create_jwt(user.id)
+
+    # 记录审计日志
+    log_audit(db, user.id, "auth_refresh", "user", user.id)
+
+    return ok({
+        "access_token": new_access_token,
+        "token_type": "Bearer",
+    })
 
 
 @router.get("/me")

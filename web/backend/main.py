@@ -13,6 +13,8 @@ from .routes import skills as skills_router
 from .routes import a2a as a2a_router
 from .routes import audit as audit_router
 from .routes import templates as templates_router
+from .routes import users as users_router
+from .routes import rtk as rtk_router
 
 
 @asynccontextmanager
@@ -58,6 +60,8 @@ app.include_router(skills_router.router, prefix="/api/v1")
 app.include_router(a2a_router.router, prefix="/api/v1")
 app.include_router(audit_router.router, prefix="/api/v1")
 app.include_router(templates_router.router, prefix="/api/v1")
+app.include_router(users_router.router, prefix="/api/v1")
+app.include_router(rtk_router.router, prefix="/api/v1")
 
 
 @app.get("/")

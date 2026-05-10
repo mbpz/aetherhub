@@ -7,6 +7,8 @@ import httpx
 import jwt as pyjwt
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+from sqlalchemy.orm import Session
+from sqlalchemy.sql import func
 
 # ─── 环境变量配置 ─────────────────────────────────────────────────────────────
 GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", "")
@@ -167,6 +169,11 @@ def verify_refresh_token(token: str) -> Optional[int]:
 
 # 刷新令牌黑名单（已使用的令牌）
 _refresh_token_blacklist = set()
+
+
+def is_refresh_token_blacklisted(token: str) -> bool:
+    """检查刷新令牌是否已在黑名单中"""
+    return token in _refresh_token_blacklist
 
 
 def invalidate_refresh_token(token: str):

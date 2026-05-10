@@ -24,6 +24,7 @@ class User(Base):
     email = Column(String(200))
     bio = Column(Text)
     html_url = Column(Text)
+    is_staff = Column(Boolean, default=False)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
@@ -40,6 +41,7 @@ class User(Base):
             "email": self.email,
             "bio": self.bio,
             "html_url": self.html_url,
+            "is_staff": self.is_staff,
             "created_at": self.created_at.isoformat() + "Z" if self.created_at else None,
         }
 

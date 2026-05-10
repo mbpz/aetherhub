@@ -1,26 +1,32 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { CheckCircle, XCircle, X } from 'lucide-react'
 
 let toastQueue = []
-let setToastsGlobal = null
 
 export function toast(message, type = 'success') {
   const id = Date.now() + Math.random()
   const newToast = { id, message, type }
   toastQueue = [...toastQueue, newToast]
-  if (setToastsGlobal) setToastsGlobal([...toastQueue])
+  // Use setTimeout to avoid state update during render
+  setTimeout(() => {
+    window.__toastSetter?.([...toastQueue])
+  }, 0)
   setTimeout(() => {
     toastQueue = toastQueue.filter((t) => t.id !== id)
-    if (setToastsGlobal) setToastsGlobal([...toastQueue])
+    window.__toastSetter?.([...toastQueue])
   }, 3500)
 }
 
 export function ToastContainer() {
   const [toasts, setToasts] = useState([])
+  const setterRef = useRef(setToasts)
 
   useEffect(() => {
-    setToastsGlobal = setToasts
-    return () => { setToastsGlobal = null }
+    setterRef.current = setToasts
+    window.__toastSetter = setToasts
+    return () => {
+      window.__toastSetter = null
+    }
   }, [])
 
   const remove = (id) => {

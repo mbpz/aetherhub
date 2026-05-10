@@ -44,10 +44,9 @@ async def list_audit_logs(
     current_user: User = Depends(require_user),
 ):
     """获取审计日志列表（仅管理员）"""
-    # 简单的管理员检查：需要 is_staff 或通过其他方式判断
-    # 这里假设所有认证用户都可以查看审计日志，实际应检查管理员权限
-    if not current_user:
-        return {"code": 4001, "message": "Unauthorized", "data": None}
+    # 检查是否为 staff 用户
+    if not current_user.is_staff:
+        return {"code": 4003, "message": "Forbidden: staff access required", "data": None}
 
     query = db.query(AuditLog)
 
