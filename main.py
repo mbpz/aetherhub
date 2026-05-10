@@ -1,10 +1,15 @@
 """主程序"""
 import sys
-from aetherhub.ismp.protocol import ISMPProtocol
-from aetherhub.codex.engine import CodexEngine
-from aetherhub.verification.z3_verifier import Z3Verifier
-from aetherhub.execution.wasmtime import WasmtimeSandbox
-from aetherhub.utils.report import ReportGenerator
+import os
+
+# 添加项目根目录到路径
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from ismp.protocol import ISMPProtocol
+from codex.engine import CodexEngine
+from verification.z3_verifier import Z3Verifier
+from execution.wasmtime import WasmtimeSandbox
+from utils.report import ReportGenerator
 
 
 def main():

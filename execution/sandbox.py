@@ -127,7 +127,7 @@ class Sandbox:
             }
 
         # 执行代码
-        from aetherhub.execution.wasmtime import WasmtimeSandbox
+        from execution.wasmtime import WasmtimeSandbox
 
         sandbox = WasmtimeSandbox(
             memory_limit_mb=self.config.memory_limit_mb,

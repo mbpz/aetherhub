@@ -3,9 +3,9 @@ from typing import Dict, List, Any
 import time
 import datetime
 
-from aetherhub.ismp.semantic import SemanticVectorizer
-from aetherhub.ismp.capability import CapabilitySpace
-from aetherhub.ismp.constraint import ConstraintInjector
+from ismp.semantic import SemanticVectorizer
+from ismp.capability import CapabilitySpace
+from ismp.constraint import ConstraintInjector
 
 
 class ISMPProtocol:

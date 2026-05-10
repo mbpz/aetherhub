@@ -45,7 +45,7 @@ class ConstraintInjector:
                                  code: str,
                                  constraints: Dict[str, Any]) -> Dict[str, Any]:
         """为文件操作注入约束"""
-        from aetherhub.ismp.capability import CapabilitySpace
+        from ismp.capability import CapabilitySpace
         cap_space = CapabilitySpace()
         rules = cap_space.get_resource_rules("file")
 
@@ -72,7 +72,7 @@ class ConstraintInjector:
                                        code: str,
                                        constraints: Dict[str, Any]) -> Dict[str, Any]:
         """为数据库操作注入约束"""
-        from aetherhub.ismp.capability import CapabilitySpace
+        from ismp.capability import CapabilitySpace
         cap_space = CapabilitySpace()
         rules = cap_space.get_resource_rules("database")
 
@@ -94,7 +94,7 @@ class ConstraintInjector:
                                      code: str,
                                      constraints: Dict[str, Any]) -> Dict[str, Any]:
         """为网络操作注入约束"""
-        from aetherhub.ismp.capability import CapabilitySpace
+        from ismp.capability import CapabilitySpace
         cap_space = CapabilitySpace()
         rules = cap_space.get_resource_rules("network")
 
@@ -145,7 +145,7 @@ class ConstraintInjector:
 
     def check_path_violations(self, paths: List[str]) -> List[str]:
         """检查路径是否违反安全规则"""
-        from aetherhub.ismp.capability import CapabilitySpace
+        from ismp.capability import CapabilitySpace
         cap_space = CapabilitySpace()
         rules = cap_space.get_resource_rules("file")
         forbidden = rules.get("forbidden_paths", [])
