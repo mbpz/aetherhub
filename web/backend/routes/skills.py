@@ -1,11 +1,13 @@
 """
 Skill 路由：CRUD + 搜索 + Star
 """
+import base64
 import json
 import math
 import os
 import re
 import shutil
+from datetime import datetime
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import JSONResponse, FileResponse, PlainTextResponse
@@ -14,9 +16,10 @@ from sqlalchemy import func, or_, text
 import numpy as np
 
 from ..deps import get_db, get_optional_user, require_user
-from ..models import Skill, SkillFile, SkillStar, User, SkillVersion
+from ..models import Skill, SkillFile, SkillStar, User, SkillVersion, SkillModeration
 from ..embeddings import text_to_embedding, cosine_similarity, rrf_fusion
 from ..database import engine, rebuild_fts_index
+from ..middleware import log_audit
 
 router = APIRouter(prefix="/skills", tags=["skills"])
 
@@ -27,6 +30,21 @@ MAX_TOTAL_SIZE = 50 * 1024 * 1024  # 50MB
 ALLOWED_EXTENSIONS = {".py", ".md", ".txt", ".json", ".yaml", ".yml", ".toml"}
 
 CATEGORIES = ["数据处理", "网络工具", "文件操作", "AI工具", "系统工具", "其他"]
+
+
+def encode_cursor(skill_id: int, created_at: datetime) -> str:
+    """将 cursor 信息编码为 base64 字符串"""
+    data = {"id": skill_id, "created_at": created_at.isoformat()}
+    return base64.b64encode(json.dumps(data).encode()).decode()
+
+
+def decode_cursor(cursor: str) -> Optional[dict]:
+    """解码 cursor 字符串，返回 dict 或 None"""
+    try:
+        data = json.loads(base64.b64decode(cursor.encode()).decode())
+        return data
+    except Exception:
+        return None
 
 
 def ok(data=None, message="success"):
@@ -56,10 +74,11 @@ async def list_skills(
     order: str = Query(default="desc"),
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
+    cursor: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_user),
 ):
-    """获取公开技能列表"""
+    """获取公开技能列表（支持 cursor 或 offset 分页）"""
     query = db.query(Skill).filter(Skill.is_public == True)
 
     if q:
@@ -75,25 +94,64 @@ async def list_skills(
             if tag:
                 query = query.filter(Skill.tags.contains(tag))
 
+    # Cursor-based pagination (优先)
+    if cursor:
+        cursor_data = decode_cursor(cursor)
+        if cursor_data:
+            cursor_id = cursor_data.get("id")
+            cursor_created_at = cursor_data.get("created_at")
+            if cursor_id and cursor_created_at:
+                cursor_dt = datetime.fromisoformat(cursor_created_at)
+                if order == "desc":
+                    query = query.filter(
+                        (Skill.created_at < cursor_dt)
+                        | (Skill.created_at == cursor_dt, Skill.id < cursor_id)
+                    )
+                else:
+                    query = query.filter(
+                        (Skill.created_at > cursor_dt)
+                        | (Skill.created_at == cursor_dt, Skill.id > cursor_id)
+                    )
+
+        sort_col = getattr(Skill, sort, Skill.created_at)
+        if order == "asc":
+            query = query.order_by(sort_col.asc(), Skill.id.asc())
+        else:
+            query = query.order_by(sort_col.desc(), Skill.id.desc())
+    else:
+        # Offset pagination (fallback)
+        sort_col = getattr(Skill, sort, Skill.created_at)
+        if order == "asc":
+            query = query.order_by(sort_col.asc())
+        else:
+            query = query.order_by(sort_col.desc())
+
     total = query.count()
 
-    sort_col = getattr(Skill, sort, Skill.created_at)
-    if order == "asc":
-        query = query.order_by(sort_col.asc())
+    # 如果使用 cursor 分页，不返回 total（前端不需要）
+    if cursor:
+        skills = query.limit(size).all()
+        next_cursor = None
+        if len(skills) == size:
+            last = skills[-1]
+            next_cursor = encode_cursor(last.id, last.created_at)
+        return ok({
+            "size": size,
+            "items": [s.to_dict() for s in skills],
+            "next_cursor": next_cursor,
+        })
     else:
-        query = query.order_by(sort_col.desc())
-
-    offset = (page - 1) * size
-    skills = query.offset(offset).limit(size).all()
-    pages = math.ceil(total / size) if size else 1
-
-    return ok({
-        "total": total,
-        "page": page,
-        "size": size,
-        "pages": pages,
-        "items": [s.to_dict() for s in skills],
-    })
+        # Offset pagination
+        offset = (page - 1) * size
+        skills = query.offset(offset).limit(size).all()
+        pages = math.ceil(total / size) if size else 1
+        return ok({
+            "total": total,
+            "page": page,
+            "size": size,
+            "pages": pages,
+            "items": [s.to_dict() for s in skills],
+        })
 
 
 @router.get("/categories")
@@ -117,6 +175,7 @@ async def search_skills(
     sort: str = Query(default="relevance"),
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
+    cursor: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
 ):
     """
@@ -126,10 +185,10 @@ async def search_skills(
     - category: 可选分类过滤
     - tags: 可选标签过滤（逗号分隔）
     - sort: relevance | star_count | created_at（默认 relevance 使用 RRF 融合）
-    - page, size: 分页参数
+    - page, size, cursor: 分页参数（cursor 优先）
     """
     if not q:
-        # No query, fall back to regular list
+        # No query, fall back to regular list with cursor support
         query = db.query(Skill).filter(Skill.is_public == True)
         if category:
             query = query.filter(Skill.category == category)
@@ -139,17 +198,40 @@ async def search_skills(
                 if tag:
                     query = query.filter(Skill.tags.contains(tag))
 
-        total = query.count()
-        offset = (page - 1) * size
-        skills = query.order_by(Skill.created_at.desc()).offset(offset).limit(size).all()
-        pages = math.ceil(total / size) if size else 1
-        return ok({
-            "total": total,
-            "page": page,
-            "size": size,
-            "pages": pages,
-            "items": [s.to_dict() for s in skills],
-        })
+        if cursor:
+            cursor_data = decode_cursor(cursor)
+            if cursor_data:
+                cursor_id = cursor_data.get("id")
+                cursor_created_at = cursor_data.get("created_at")
+                if cursor_id and cursor_created_at:
+                    cursor_dt = datetime.fromisoformat(cursor_created_at)
+                    query = query.filter(
+                        (Skill.created_at < cursor_dt)
+                        | (Skill.created_at == cursor_dt, Skill.id < cursor_id)
+                    )
+            query = query.order_by(Skill.created_at.desc(), Skill.id.desc())
+            skills = query.limit(size).all()
+            next_cursor = None
+            if len(skills) == size:
+                last = skills[-1]
+                next_cursor = encode_cursor(last.id, last.created_at)
+            return ok({
+                "size": size,
+                "items": [s.to_dict() for s in skills],
+                "next_cursor": next_cursor,
+            })
+        else:
+            total = query.count()
+            offset = (page - 1) * size
+            skills = query.order_by(Skill.created_at.desc()).offset(offset).limit(size).all()
+            pages = math.ceil(total / size) if size else 1
+            return ok({
+                "total": total,
+                "page": page,
+                "size": size,
+                "pages": pages,
+                "items": [s.to_dict() for s in skills],
+            })
 
     # Build base query for filters
     base_query = db.query(Skill.id).filter(Skill.is_public == True)
@@ -332,8 +414,12 @@ async def get_skill_file(
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             content = f.read()
+        # 记录审计日志
+        log_audit(db, None, "skill_download", "skill_file", file_record.id, details={"skill_id": skill_id, "filename": filename})
         return PlainTextResponse(content)
     except UnicodeDecodeError:
+        # 记录审计日志
+        log_audit(db, None, "skill_download", "skill_file", file_record.id, details={"skill_id": skill_id, "filename": filename})
         return FileResponse(file_path)
 
 
@@ -450,6 +536,9 @@ async def create_skill(
     # Rebuild FTS index to include new skill
     rebuild_fts_index(engine)
 
+    # 记录审计日志
+    log_audit(db, current_user.id, "skill_create", "skill", skill.id, details={"name": skill.name})
+
     return ok({
         "id": skill.id,
         "name": skill.name,
@@ -484,6 +573,9 @@ async def delete_skill(
 
     # Rebuild FTS index after deletion
     rebuild_fts_index(engine)
+
+    # 记录审计日志
+    log_audit(db, current_user.id, "skill_delete", "skill", skill_id, details={"name": skill.name})
 
     return ok(None, "Skill deleted successfully")
 
@@ -523,6 +615,9 @@ async def star_skill(
     db.commit()
     db.refresh(skill)
 
+    # 记录审计日志
+    log_audit(db, current_user.id, "skill_star", "skill", skill_id, details={"name": skill.name, "rating": rating})
+
     return ok({"star_count": skill.star_count, "is_starred": True, "rating": rating}, "Starred successfully")
 
 
@@ -547,6 +642,9 @@ async def unstar_skill(
         skill.star_count = max(0, (skill.star_count or 1) - 1)
         db.commit()
         db.refresh(skill)
+
+    # 记录审计日志
+    log_audit(db, current_user.id, "skill_unstar", "skill", skill_id, details={"name": skill.name})
 
     return ok({"star_count": skill.star_count, "is_starred": False}, "Unstarred successfully")
 

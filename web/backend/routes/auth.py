@@ -13,6 +13,7 @@ from ..auth import (
     exchange_code_for_token, get_github_user,
     create_jwt, is_mock_mode
 )
+from ..middleware import log_audit
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -100,6 +101,9 @@ async def callback(
     db.commit()
     db.refresh(user)
 
+    # 记录审计日志
+    log_audit(db, user.id, "auth_login", "user", user.id)
+
     # 生成 JWT
     token = create_jwt(user.id)
 
@@ -136,6 +140,9 @@ async def mock_callback(
         db.commit()
         db.refresh(user)
 
+    # 记录审计日志
+    log_audit(db, user.id, "auth_login", "user", user.id, details={"mode": "mock"})
+
     token = create_jwt(user.id)
     return RedirectResponse(
         url=f"{FRONTEND_URL}/auth/callback?token={token}"
@@ -149,6 +156,11 @@ async def me(current_user: User = Depends(require_user)):
 
 
 @router.post("/logout")
-async def logout(current_user: User = Depends(require_user)):
+async def logout(
+    current_user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
     """登出（前端清除 token，后端无状态）"""
+    # 记录审计日志
+    log_audit(db, current_user.id, "auth_logout", "user", current_user.id)
     return ok(None, "Logged out successfully")
