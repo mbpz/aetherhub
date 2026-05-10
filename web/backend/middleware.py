@@ -55,16 +55,30 @@ _anonymous_limiter = TokenBucket(rate=20, per_seconds=60)
 
 def get_client_key(request: Request) -> str:
     """获取客户端标识 key"""
-    # 优先使用 X-Forwarded-For 或 X-Real-IP，否则用 client.host
+    # 仅在请求来自已知代理时信任 X-Forwarded-For
+    # 否则使用 client.host（无法伪造）
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
-        return forwarded.split(",")[0].strip()
+        # 检查是否是私有/内网IP，如果是则信任，否则忽略
+        first_ip = forwarded.split(",")[0].strip()
+        if _is_private_ip(first_ip):
+            return first_ip
     real_ip = request.headers.get("x-real-ip")
-    if real_ip:
+    if real_ip and _is_private_ip(real_ip):
         return real_ip
     if request.client:
         return request.client.host
     return "unknown"
+
+
+def _is_private_ip(ip: str) -> bool:
+    """检查是否是私有/内网IP段"""
+    import ipaddress
+    try:
+        addr = ipaddress.ip_address(ip)
+        return addr.is_private or addr.is_loopback or addr.is_reserved
+    except Exception:
+        return False
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):

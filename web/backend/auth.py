@@ -17,7 +17,11 @@ GITHUB_CALLBACK_URL = os.getenv(
     "GITHUB_CALLBACK_URL", "http://localhost:8000/api/v1/auth/callback"
 )
 
-JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "aetherhub-dev-secret-change-in-prod")
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+if not JWT_SECRET_KEY:
+    if os.getenv("AETHERHUB_ENV") == "production":
+        raise RuntimeError("JWT_SECRET_KEY must be set in production")
+    JWT_SECRET_KEY = "aetherhub-dev-secret-only-for-dev"
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", "24"))
 

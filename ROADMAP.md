@@ -1,8 +1,27 @@
 # AetherHub 实现 Roadmap
 
-**版本**: v2.0
+**版本**: v2.1
 **更新日期**: 2026-05-10
 **状态**: 进行中
+
+---
+
+## 0. 产品定位（核心）
+
+**一句话定位**: AI Agent 技能的"Signed Commit"——每个技能带 Z3 数学证明。
+
+**产品本质**: Proof-Carrying Skills Marketplace（带证明的技能市场）
+
+| 维度 | 说明 |
+|------|------|
+| **核心差异** | No competitor combines: 技能市场 + Z3形式化验证 + 动态生成 + Wasm沙箱 |
+| **目标用户** | AI Agent开发者（需要可信赖技能）、企业安全团队（形式化验证需求）、技能创作者（证明正确性）、AI安全研究员（验证实验平台） |
+| **技术护城河** | ISMP协议 → Codex动态生成 → Z3数学证明 → Wasmtime沙箱，四层纵深防御 |
+| **商业化方向** | Free(10技能/100验证) → Pro($9/月无限制) → Enterprise(SSO/SLA/私有部署) |
+
+**存储状态**: 本地文件系统 `uploads/`（非S3）
+**版本管理**: `skill_versions` 表已实现，UI待完善
+**CLI**: 面向开发者（`run`/`verify`/`execute`），缺少用户端工作流（login/upload/install）
 
 ---
 

@@ -242,11 +242,11 @@ def process_data(data: List[Any], operation: str = "identity") -> List[Any]:
         """
         dangerous = ["exec(", "eval(", "__import__", "subprocess.call",
                      "os.system", "pty.spawn", "socket.socket"]
-        fixed = code
         for pattern in dangerous:
             if pattern in code:
-                fixed = fixed.replace(pattern, f"# 移除危险模式: {pattern}")
-        return fixed
+                # 完全移除危险模式，而不是只加注释
+                code = code.replace(pattern, "# 移除危险模式")
+        return code
 
     def generate_with_verification(self, intent_vector: dict,
                                    atomic_skills: List[str],
