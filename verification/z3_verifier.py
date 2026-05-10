@@ -190,19 +190,28 @@ class Z3Verifier:
         import re
 
         # 寻找实际的文件读取/写入操作
-        # open() 的第一参数、os.read/write/remove/stat/makedirs 等
-        actual_file_ops = re.findall(
-            r'(?:open\s*\([^)]+|\.[\s]*open\s*\(|os\s*\.\s*(?:read|write|remove|stat|makedirs|chmod|chown)|'
-            r'shutil\s*\.\s*(?:copyfile|move|rmtree)|Path\s*\()[^)]*["\'](/[^\s"\']+)["\']',
-            code
-        )
-        # 展平结果
+        # 匹配各种文件操作模式和路径参数
+        file_op_patterns = [
+            # open() calls
+            r'open\s*\(\s*["\']([/][^\s"\']+)["\']',
+            # os.path.* functions
+            r'os\s*\.\s*path\s*\.\s*(?:join|exists|isfile|isdir|abspath|dirname)\s*\([^)]*["\']([/][^\s"\']+)["\']',
+            # os.* file operations
+            r'os\s*\.\s*(?:read|write|remove|stat|makedirs|chmod|chown|rename)\s*\([^)]*["\']([/][^\s"\']+)["\']',
+            # shutil operations
+            r'shutil\s*\.\s*(?:copyfile|copy|move|rmtree|copytree)\s*\([^)]*["\']([/][^\s"\']+)["\']',
+            # pathlib.Path
+            r'Path\s*\(\s*["\']([/][^\s"\']+)["\']',
+            # glob.glob
+            r'glob\s*\.\s*glob\s*\([^)]*["\']([/][^\s"\']+)["\']',
+            # subprocess with file paths
+            r'subprocess\s*\.\s*(?:call|Popen|run)\s*\([^)]*["\']([/][^\s"\']+)["\']',
+        ]
+
         actual_paths = []
-        for match in actual_file_ops:
-            if isinstance(match, str):
-                actual_paths.append(match)
-            elif isinstance(match, tuple):
-                actual_paths.extend([p for p in match if p])
+        for pattern in file_op_patterns:
+            matches = re.findall(pattern, code)
+            actual_paths.extend(matches)
 
         violations = []
         for path in actual_paths:

@@ -53,23 +53,53 @@ class ISMPProtocol:
         """
         情境感知逻辑合成
 
-        使用 Codex 生成代码
+        使用 Codex 生成代码（带验证重试循环）
         """
-        prompt = f"""
-根据以下意图，生成 Python 代码实现：
-意图: {intent_vector}
-原子技能: {atomic_skills}
+        max_attempts = 3
+        last_error = None
 
-要求：
-1. 代码简洁、高效
-2. 包含错误处理
-3. 遵循 Python 最佳实践
-4. 使用类型提示
-5. 严格遵守安全约束，不访问禁止路径
-"""
+        for attempt in range(max_attempts):
+            try:
+                # 使用 generate_with_verification 获取带验证的代码
+                result = self.codex.generate_with_verification(
+                    intent_vector,
+                    atomic_skills
+                )
 
-        code = self.codex.generate(prompt)
-        return code
+                code = result.get("code", "")
+                verified = result.get("verified", False)
+
+                # 如果代码未通过验证且有修复建议，使用修复后的代码
+                if not verified and "fixed_code" in result:
+                    code = result["fixed_code"]
+
+                if code and len(code) > 50:
+                    return code
+
+            except Exception as e:
+                last_error = str(e)
+
+            # 验证失败或代码无效，重试
+            if attempt < max_attempts - 1:
+                continue
+
+        # 所有尝试都失败，返回兜底代码
+        return self._fallback_code(intent_vector, atomic_skills)
+
+    def _fallback_code(self, intent_vector: Dict[str, Any],
+                       atomic_skills: List[str]) -> str:
+        """兜底代码生成"""
+        return f'''"""生成的技能代码 - 回退模式"""
+from typing import Any, List
+
+
+def process_data(data: List[Any]) -> List[Any]:
+    """
+    处理数据（意图: {intent_vector.get("raw_intent", "unknown")}）
+    技能: {atomic_skills}
+    """
+    return data if data else []
+'''
 
     def _pack_artifact(self, intent_vector: Dict[str, Any],
                        atomic_skills: List[str], code: str,

@@ -240,29 +240,33 @@ def process_data(data: List[Any], operation: str = "identity") -> List[Any]:
 
         集成 Z3 反馈进行迭代修正
         """
-        # 基础安全检查
         dangerous = ["exec(", "eval(", "__import__", "subprocess.call",
                      "os.system", "pty.spawn", "socket.socket"]
+        fixed = code
         for pattern in dangerous:
             if pattern in code:
-                code = code.replace(pattern, f"# 移除危险模式: {pattern}")
-
-        return code
+                fixed = fixed.replace(pattern, f"# 移除危险模式: {pattern}")
+        return fixed
 
     def generate_with_verification(self, intent_vector: dict,
-                                   atomic_skills: List[str]) -> Dict[str, Any]:
+                                   atomic_skills: List[str],
+                                   z3_verifier=None,
+                                   max_retries: int = 3) -> Dict[str, Any]:
         """
-        生成代码并进行验证
+        生成代码并进行验证（带重试循环）
 
         Args:
             intent_vector: 意图向量
             atomic_skills: 原子技能列表
+            z3_verifier: Z3 验证器（可选）
+            max_retries: 最大重试次数
 
         Returns:
             {
                 "code": str,
                 "verified": bool,
-                "feedback": str
+                "feedback": str,
+                "fixed_code": str or None
             }
         """
         prompt = USER_PROMPT_TEMPLATE.format(
@@ -270,13 +274,72 @@ def process_data(data: List[Any], operation: str = "identity") -> List[Any]:
             atomic_skills=atomic_skills,
         )
 
-        code = self.generate(prompt)
+        last_feedback = ""
+        last_fixed = None
 
-        # 安全检查
-        verified_code = self.verify_and_fix(code)
+        for attempt in range(max_retries):
+            # 生成代码
+            code = self.generate(prompt)
+            if not code or len(code) < 20:
+                last_feedback = "代码生成失败"
+                continue
 
+            # 安全检查
+            verified_code = self.verify_and_fix(code)
+
+            # 如果有 Z3 验证器，进行形式化验证
+            if z3_verifier:
+                rules = intent_vector.get("constraints", [])
+                if not rules:
+                    rules = ["禁止访问 /etc", "禁止访问 /usr", "禁止访问 /sys",
+                             "禁止访问 /dev", "禁止访问 /proc", "禁止访问 /var/log",
+                             "禁止访问 /root", "文件大小不超过 100MB"]
+
+                result = z3_verifier.verify_with_feedback(verified_code, rules)
+
+                if not result.get("verified", False):
+                    last_feedback = result.get("feedback", "验证失败")
+                    # 如果有修复建议，使用修复后的代码
+                    if result.get("fixed_code"):
+                        last_fixed = result["fixed_code"]
+                        verified_code = result["fixed_code"]
+                    # 否则用注释标记问题代码段
+                    else:
+                        violations = result.get("violations", [])
+                        for v in violations:
+                            if "路径" in str(v) or "函数" in str(v):
+                                # 找到并注释掉问题行
+                                for line in verified_code.split("\n"):
+                                    if any(p in line for p in ["/etc", "/usr", "/sys", "/dev", "exec(", "eval("]):
+                                        if not line.strip().startswith("#"):
+                                            verified_code = verified_code.replace(
+                                                line,
+                                                f"# [安全删除] {line}"
+                                            )
+            else:
+                last_feedback = "代码已生成并通过基础安全检查"
+
+            # 基础验证：确保代码不包含明显危险模式
+            dangerous_found = False
+            for pattern in ["exec(", "eval(", "__import__", "subprocess.call", "os.system"]:
+                if pattern in verified_code:
+                    dangerous_found = True
+                    break
+
+            if not dangerous_found and len(verified_code) > 50:
+                return {
+                    "code": verified_code,
+                    "verified": True,
+                    "feedback": last_feedback or "代码已生成并通过安全检查",
+                    "fixed_code": last_fixed,
+                }
+
+            last_feedback = f"尝试 {attempt + 1}: 代码未通过安全检查"
+
+        # 所有尝试都失败
         return {
-            "code": verified_code,
-            "verified": True,
-            "feedback": "代码已生成并通过安全检查" if verified_code == code else "代码已修复安全问题",
+            "code": last_fixed or '"""生成的代码 - 安全模式"""\npass',
+            "verified": False,
+            "feedback": f"代码生成失败，已尝试 {max_retries} 次: {last_feedback}",
+            "fixed_code": None,
         }

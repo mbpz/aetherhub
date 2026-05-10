@@ -63,10 +63,12 @@ class Skill(Base):
     rating_sum = Column(Integer, default=0)  # sum of all ratings (1-10)
     rating_count = Column(Integer, default=0)  # number of ratings
     embedding = Column(LargeBinary, nullable=True)  # vector embedding as BLOB
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
     author = relationship("User", back_populates="skills")
+    organization = relationship("Organization", back_populates="skills")
     files = relationship("SkillFile", back_populates="skill", cascade="all, delete-orphan")
     stars = relationship("SkillStar", back_populates="skill", cascade="all, delete-orphan")
     versions = relationship("SkillVersion", back_populates="skill", cascade="all, delete-orphan")
@@ -187,6 +189,107 @@ class SkillVersion(Base):
             "description": self.description,
             "created_at": self.created_at.isoformat() + "Z" if self.created_at else None,
             "created_by": self.created_by,
+        }
+
+
+class Organization(Base):
+    """组织/团队表"""
+    __tablename__ = "organizations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(200), nullable=False)
+    slug = Column(String(100), unique=True, nullable=False)
+    description = Column(Text)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    members = relationship("OrganizationMember", back_populates="organization", cascade="all, delete-orphan")
+    skills = relationship("Skill", back_populates="organization")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "slug": self.slug,
+            "description": self.description,
+            "created_at": self.created_at.isoformat() + "Z" if self.created_at else None,
+        }
+
+
+class OrganizationMember(Base):
+    """组织成员关联表"""
+    __tablename__ = "organization_members"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    role = Column(String(50), default="member")  # admin, member
+    created_at = Column(DateTime, default=func.now())
+
+    organization = relationship("Organization", back_populates="members")
+    user = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint("organization_id", "user_id", name="uq_org_user"),
+    )
+
+
+class AuditLog(Base):
+    """审计日志表"""
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    action = Column(String(100), nullable=False)
+    resource_type = Column(String(50), nullable=False)
+    resource_id = Column(Integer, nullable=True)
+    details = Column(Text, default="{}")  # JSON string
+    ip_address = Column(String(50))
+    created_at = Column(DateTime, default=func.now())
+
+    user = relationship("User")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "action": self.action,
+            "resource_type": self.resource_type,
+            "resource_id": self.resource_id,
+            "details": self.details,
+            "ip_address": self.ip_address,
+            "created_at": self.created_at.isoformat() + "Z" if self.created_at else None,
+        }
+
+
+class SkillModeration(Base):
+    """技能审核表"""
+    __tablename__ = "skill_moderation"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    skill_id = Column(Integer, ForeignKey("skills.id"), nullable=False)
+    status = Column(String(20), default="pending")  # pending, approved, rejected
+    reviewer_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    review_note = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=func.now())
+    reviewed_at = Column(DateTime, nullable=True)
+
+    skill = relationship("Skill")
+    reviewer = relationship("User", foreign_keys=[reviewer_id])
+
+    __table_args__ = (
+        UniqueConstraint("skill_id", name="uq_moderation_skill"),
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "skill_id": self.skill_id,
+            "status": self.status,
+            "reviewer_id": self.reviewer_id,
+            "review_note": self.review_note,
+            "created_at": self.created_at.isoformat() + "Z" if self.created_at else None,
+            "reviewed_at": self.reviewed_at.isoformat() + "Z" if self.reviewed_at else None,
         }
 
 

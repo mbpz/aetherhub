@@ -38,6 +38,13 @@ class ConstraintInjector:
             constraints = self._inject_database_constraints(intent_vector, code, constraints)
         elif resource_type == "network":
             constraints = self._inject_network_constraints(intent_vector, code, constraints)
+        elif resource_type == "memory":
+            constraints = self._inject_memory_constraints(intent_vector, code, constraints)
+        else:
+            # 未知资源类型，记录警告
+            constraints["metadata"]["warning"] = f"未知资源类型: {resource_type}，使用默认约束"
+            constraints["rules"].append("禁止访问系统内存")
+            constraints["max_size"] = 512 * 1024 * 1024  # 512MB
 
         return constraints
 
@@ -113,6 +120,25 @@ class ConstraintInjector:
             rules["forbidden_domains"],
             rules["forbidden_ips"]
         )
+
+        return constraints
+
+    def _inject_memory_constraints(self, intent_vector: Dict[str, Any],
+                                    code: str,
+                                    constraints: Dict[str, Any]) -> Dict[str, Any]:
+        """为内存操作注入约束"""
+        from ismp.capability import CapabilitySpace
+        cap_space = CapabilitySpace()
+        rules = cap_space.get_resource_rules("memory")
+
+        max_memory = rules.get("max_memory", 512 * 1024 * 1024)  # 512MB
+        constraints["max_memory"] = max_memory
+        constraints["rules"].append(f"内存使用不超过 {max_memory // (1024*1024)}MB")
+
+        # 检查是否有大量内存分配
+        import re
+        if re.search(r'\b(?:malloc|alloc|new\s+[\w]+|Array\.create|\[\]\s*\(1024', code):
+            constraints["metadata"]["warning"] = "检测到大量内存分配"
 
         return constraints
 
