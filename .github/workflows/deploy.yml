@@ -1,15 +1,135 @@
-name: Deploy
+name: Build & Release
 
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
+  release:
+    types: [published]
+  workflow_dispatch:
 
 jobs:
-  deploy:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install build dependencies
+        run: pip install build
+
+      - name: Build wheel and sdist
+        run: python -m build
+        env:
+          PULP_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+
+      - name: List built artifacts
+        run: |
+          ls -la dist/
+          echo "---"
+          echo "Built files:"
+          find dist/ -type f -name "*.whl" -o -name "*.tar.gz"
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels
+          path: dist/*.whl
+
+      - name: Verify package
+        run: |
+          pip install dist/*.whl --force-reinstall --no-deps
+          python -c "import aetherhub; print('aetherhub version:', aetherhub.__version__)"
+          aetherhub --version || true
+
+  test-cli:
+    needs: build
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Deploy ready
-        run: echo "deploy ready"
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wheels
+          path: dist/
+
+      - name: Install aetherhub
+        run: pip install dist/*.whl
+
+      - name: Test CLI
+        run: |
+          aetherhub --help
+          aetherhub info
+          aetherhub version
+
+      - name: Test pipeline
+        run: |
+          pip install -e . --quiet
+          python main.py
+
+  # Publish to PyPI on release tags
+  publish-pypi:
+    needs: [build, test-cli]
+    if: github.event_name == 'release' && github.event.action == 'published'
+    runs-on: ubuntu-latest
+
+    environment:
+      name: pypi
+      url: https://pypi.org/project/aetherhub/
+
+    permissions:
+      id-token: write  # Required for trusted publishing
+
+    steps:
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wheels
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_PASSWORD }}
+          packages-dir: dist/
+
+  # Build standalone binaries (optional future enhancement)
+  build-binaries:
+    needs: [build]
+    if: false  # Disabled for now - requires cross-compilation
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyInstaller
+        run: pip install pyinstaller
+
+      - name: Build standalone executable
+        run: pyinstaller --onefile --name aetherhub cli.py
+
+      - name: Upload executable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: dist/aetherhub
