@@ -53,7 +53,7 @@ class CodexEngine:
         if api_key and OpenAI:
             self.client = OpenAI(api_key=api_key)
 
-    def generate(self, prompt: str, max_tokens: int = 4096) -> str:
+    def generate(self, prompt: str, max_tokens: int = 4096) -> Dict[str, Any]:
         """
         生成代码
 
@@ -62,7 +62,7 @@ class CodexEngine:
             max_tokens: 最大 token 数
 
         Returns:
-            生成的代码
+            {"code": str, "verified": bool, "error": str or None}
         """
         if not self.client:
             return self._mock_generate(prompt)
@@ -83,11 +83,11 @@ class CodexEngine:
                 lines = code.split("\n")
                 code = "\n".join(lines[1:] if lines[0] == "```python" else lines)
                 code = code.rstrip("```").rstrip("```python")
-            return code
+            return {"code": code, "verified": False, "error": None}
         except Exception as e:
             return self._mock_generate(prompt, error=str(e))
 
-    def _mock_generate(self, prompt: str, error: str = None) -> str:
+    def _mock_generate(self, prompt: str, error: str = None) -> Dict[str, Any]:
         """
         Mock 模式：当没有 API key 时返回基于 prompt 的模拟代码
 
@@ -96,7 +96,7 @@ class CodexEngine:
             error: 错误信息（如果有）
 
         Returns:
-            模拟生成的代码
+            {"code": str, "verified": bool, "error": str or None}
         """
         # 从 prompt 中提取意图和技能
         intent_line = ""
@@ -110,7 +110,7 @@ class CodexEngine:
 
         # 根据技能生成适当的代码
         if "write_file" in skills_line or "写入" in intent_line:
-            return '''"""生成的技能代码"""
+            return {"code": '''"""生成的技能代码"""
 import csv
 from typing import List, Optional
 import os
@@ -183,9 +183,9 @@ def filter_data(data: List[dict], condition: str) -> List[dict]:
         except (ValueError, KeyError):
             continue
     return filtered
-'''
+''', "verified": False, "error": error}
         elif "read_file" in skills_line or "读取" in intent_line:
-            return '''"""生成的技能代码"""
+            return {"code": '''"""生成的技能代码"""
 import csv
 from typing import List, Optional
 
@@ -210,9 +210,9 @@ def read_csv_safe(filepath: str, encoding: str = "utf-8") -> List[dict]:
     with open(filepath, "r", encoding=encoding) as f:
         reader = csv.DictReader(f)
         return list(reader)
-'''
+''', "verified": False, "error": error}
         else:
-            return '''"""生成的技能代码"""
+            return {"code": '''"""生成的技能代码"""
 from typing import Any, List, Optional
 
 
@@ -232,7 +232,7 @@ def process_data(data: List[Any], operation: str = "identity") -> List[Any]:
     elif operation == "map":
         return [x for x in data]
     return data
-'''
+''', "verified": False, "error": error}
 
     def verify_and_fix(self, code: str) -> str:
         """
