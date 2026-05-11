@@ -464,10 +464,6 @@ def seed():
 
         db.commit()
 
-        # Rebuild FTS index after seed data is inserted
-        from .database import rebuild_fts_index, engine
-        rebuild_fts_index(engine)
-
         print("\n🎉 Seed data initialized successfully!")
     except Exception as e:
         db.rollback()
