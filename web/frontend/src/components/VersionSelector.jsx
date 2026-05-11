@@ -5,10 +5,14 @@ export default function VersionSelector({ skillId, currentVersion, onSelect }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch(`/api/skills/${skillId}/versions`)
+    fetch(`/api/v1/skills/${skillId}/versions`)
       .then(r => r.json())
       .then(data => {
         setVersions(data.versions || []);
+        setLoading(false);
+      })
+      .catch(err => {
+        console.error('Failed to load versions:', err);
         setLoading(false);
       });
   }, [skillId]);

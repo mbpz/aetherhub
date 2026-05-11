@@ -9,9 +9,10 @@ export default function SkillVersionsPage() {
   const [selectedV1, setSelectedV1] = useState(null);
   const [selectedV2, setSelectedV2] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
 
   useEffect(() => {
-    fetch(`/api/skills/${skillId}/versions`)
+    fetch(`/api/v1/skills/${skillId}/versions`)
       .then(r => r.json())
       .then(data => {
         setVersions(data.versions || []);
@@ -20,32 +21,56 @@ export default function SkillVersionsPage() {
           setSelectedV2(data.versions[0].version);
         }
         setLoading(false);
+      })
+      .catch(err => {
+        console.error('Failed to load versions:', err);
+        setLoading(false);
       });
   }, [skillId]);
 
   const handleRestore = async (version) => {
     if (!confirm(`Restore version ${version}?`)) return;
+    setActionLoading(true);
     const token = localStorage.getItem("token");
-    const res = await fetch(`/api/skills/${skillId}/versions/${version}/restore`, {
-      method: "POST",
-      headers: token ? { "Authorization": `Bearer ${token}` } : {},
-    });
-    if (res.ok) {
-      alert("Version restored!");
-      window.location.reload();
+    try {
+      const res = await fetch(`/api/v1/skills/${skillId}/versions/${version}/restore`, {
+        method: "POST",
+        headers: token ? { "Authorization": `Bearer ${token}` } : {},
+      });
+      if (res.ok) {
+        alert("Version restored!");
+        window.location.reload();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(`Failed to restore: ${err.detail || res.status}`);
+      }
+    } catch (err) {
+      alert(`Failed to restore: ${err.message}`);
+    } finally {
+      setActionLoading(false);
     }
   };
 
   const handleDelete = async (version) => {
     if (!confirm(`Delete version ${version}?`)) return;
+    setActionLoading(true);
     const token = localStorage.getItem("token");
-    const res = await fetch(`/api/skills/${skillId}/versions/${version}`, {
-      method: "DELETE",
-      headers: token ? { "Authorization": `Bearer ${token}` } : {},
-    });
-    if (res.ok) {
-      alert("Version deleted!");
-      window.location.reload();
+    try {
+      const res = await fetch(`/api/v1/skills/${skillId}/versions/${version}`, {
+        method: "DELETE",
+        headers: token ? { "Authorization": `Bearer ${token}` } : {},
+      });
+      if (res.ok) {
+        alert("Version deleted!");
+        window.location.reload();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(`Failed to delete: ${err.detail || res.status}`);
+      }
+    } catch (err) {
+      alert(`Failed to delete: ${err.message}`);
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -83,13 +108,15 @@ export default function SkillVersionsPage() {
             <div className="flex gap-2">
               <button
                 onClick={() => handleRestore(v.version)}
-                className="px-3 py-1 bg-blue-500 text-white rounded text-sm"
+                disabled={actionLoading}
+                className="px-3 py-1 bg-blue-500 text-white rounded text-sm disabled:opacity-50"
               >
                 恢复
               </button>
               <button
                 onClick={() => handleDelete(v.version)}
-                className="px-3 py-1 bg-red-500 text-white rounded text-sm"
+                disabled={actionLoading}
+                className="px-3 py-1 bg-red-500 text-white rounded text-sm disabled:opacity-50"
               >
                 删除
               </button>
