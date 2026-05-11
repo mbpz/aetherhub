@@ -5,7 +5,7 @@ import json
 import os
 import sys
 
-from .database import SessionLocal, init_db
+from .database import get_session, init_db
 from .models import User, Skill, SkillFile
 
 
@@ -404,7 +404,7 @@ class FileOrganizer:
 
 def seed():
     init_db()
-    db = SessionLocal()
+    db = get_session()
     try:
         # Create seed user
         user = db.query(User).filter(User.github_id == SEED_USER["github_id"]).first()

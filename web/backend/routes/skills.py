@@ -18,7 +18,7 @@ import numpy as np
 from ..deps import get_db, get_optional_user, require_user
 from ..models import Skill, SkillFile, SkillStar, User, SkillVersion, SkillModeration
 from ..embeddings import text_to_embedding, cosine_similarity, rrf_fusion, get_embedding
-from ..database import engine, rebuild_fts_index
+from ..database import engine
 from ..middleware import log_audit
 from ..services.storage import get_storage
 
@@ -495,18 +495,25 @@ async def create_skill(
     db.flush()  # 获取 skill.id
 
     # 保存文件
-    skill_upload_dir = os.path.join(UPLOAD_DIR, str(skill.id))
-    os.makedirs(skill_upload_dir, exist_ok=True)
-
+    storage = get_storage()
     readme_content = None
     skill_md_content = None
 
     for f in files:
         content = await f.read()
         safe_name = safe_filename(f.filename)
-        file_path = os.path.join(skill_upload_dir, safe_name)
-        with open(file_path, "wb") as fp:
-            fp.write(content)
+
+        # 通过 StorageService 保存文件
+        remote_key = f"skills/{skill.id}/{safe_name}"
+        # 写入临时文件再上传
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+        try:
+            file_path = await storage.upload_file(tmp_path, remote_key)
+        finally:
+            os.unlink(tmp_path)
 
         # 提取 readme 和 skill_md
         fname_lower = safe_name.lower()
@@ -534,10 +541,7 @@ async def create_skill(
     db.commit()
     db.refresh(skill)
 
-    # Rebuild FTS index to include new skill
-    rebuild_fts_index(engine)
-
-    # 记录审计日志
+# 记录审计日志
     log_audit(db, current_user.id, "skill_create", "skill", skill.id, details={"name": skill.name})
 
     return ok({
@@ -572,10 +576,7 @@ async def delete_skill(
     db.delete(skill)
     db.commit()
 
-    # Rebuild FTS index after deletion
-    rebuild_fts_index(engine)
-
-    # 记录审计日志
+# 记录审计日志
     log_audit(db, current_user.id, "skill_delete", "skill", skill_id, details={"name": skill.name})
 
     return ok(None, "Skill deleted successfully")
