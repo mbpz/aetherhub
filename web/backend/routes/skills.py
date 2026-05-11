@@ -758,6 +758,116 @@ async def create_skill_version(
     return ok({"id": skill_version.id, "version": skill_version.version}, "Version created successfully")
 
 
+@router.delete("/{skill_id}/versions/{version}")
+async def delete_skill_version(
+    skill_id: int,
+    version: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    """删除指定版本（仅限作者）"""
+    skill = db.query(Skill).filter(Skill.id == skill_id).first()
+    if not skill:
+        return err_response(4004, "Skill not found", 404)
+    if skill.author_id != current_user.id:
+        return err_response(4003, "Forbidden: You can only update your own skills", 403)
+
+    sv = db.query(SkillVersion).filter(
+        SkillVersion.skill_id == skill_id,
+        SkillVersion.version == version,
+    ).first()
+    if not sv:
+        return err_response(4004, "Version not found", 404)
+
+    db.delete(sv)
+    db.commit()
+    return ok({"version": version}, "Version deleted")
+
+
+@router.post("/{skill_id}/versions/{version}/restore")
+async def restore_skill_version(
+    skill_id: int,
+    version: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_user),
+):
+    """恢复旧版本为新版本（仅限作者）"""
+    skill = db.query(Skill).filter(Skill.id == skill_id).first()
+    if not skill:
+        return err_response(4004, "Skill not found", 404)
+    if skill.author_id != current_user.id:
+        return err_response(4003, "Forbidden: You can only update your own skills", 403)
+
+    old = db.query(SkillVersion).filter(
+        SkillVersion.skill_id == skill_id,
+        SkillVersion.version == version,
+    ).first()
+    if not old:
+        return err_response(4004, "Version not found", 404)
+
+    latest = db.query(SkillVersion).filter(
+        SkillVersion.skill_id == skill_id
+    ).order_by(SkillVersion.created_at.desc()).first()
+
+    parts = latest.version.split(".") if latest else [0, 0, 0]
+    new_version = f"{int(parts[0])}.{int(parts[1])}.{int(parts[2]) + 1}"
+
+    new_sv = SkillVersion(
+        skill_id=skill_id,
+        version=new_version,
+        description=f"Restored from {version}",
+        code_content=old.code_content,
+        created_by=current_user.id,
+    )
+    db.add(new_sv)
+    db.commit()
+    db.refresh(new_sv)
+    return ok({"new_version": new_version, "old_version": version}, "Version restored")
+
+
+@router.get("/{skill_id}/versions/diff")
+async def diff_skill_versions(
+    skill_id: int,
+    v1: str = Query(..., description="第一个版本号"),
+    v2: str = Query(..., description="第二个版本号"),
+    db: Session = Depends(get_db),
+):
+    """对比两个版本的代码差异"""
+    import difflib
+
+    skill = db.query(Skill).filter(Skill.id == skill_id).first()
+    if not skill:
+        return err_response(4004, "Skill not found", 404)
+
+    sv1 = db.query(SkillVersion).filter(
+        SkillVersion.skill_id == skill_id,
+        SkillVersion.version == v1,
+    ).first()
+    sv2 = db.query(SkillVersion).filter(
+        SkillVersion.skill_id == skill_id,
+        SkillVersion.version == v2,
+    ).first()
+    if not sv1 or not sv2:
+        return err_response(4004, "Version not found", 404)
+
+    lines1 = sv1.code_content.splitlines() if sv1.code_content else []
+    lines2 = sv2.code_content.splitlines() if sv2.code_content else []
+    diff = list(difflib.unified_diff(lines1, lines2, fromfile=v1, tofile=v2, lineterm=""))
+
+    return ok({
+        "v1": v1,
+        "v2": v2,
+        "skill_id": skill_id,
+        "diff": "\n".join(diff),
+        "stats": {
+            "v1_lines": len(lines1),
+            "v2_lines": len(lines2),
+            "additions": sum(1 for l in diff if l.startswith("+") and l not in ["+++", "+ "]),
+            "deletions": sum(1 for l in diff if l.startswith("-") and l not in ["---", "- "]),
+        },
+    })
+
+
 @router.get("/{skill_id}/analytics")
 async def get_skill_analytics(
     skill_id: int,
