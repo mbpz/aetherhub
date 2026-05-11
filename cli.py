@@ -411,7 +411,7 @@ def install(name, version):
     headers = get_auth_header()
     if not headers:
         console.print("[red]未登录，请运行: aetherhub login[/red]")
-        raise typer.Exit(1)
+        raise click.Abort()
 
     with httpx.Client() as client:
         search_resp = client.get(
@@ -421,12 +421,12 @@ def install(name, version):
         )
         if search_resp.status_code == 401:
             console.print("[red]认证失败，请重新登录: aetherhub login[/red]")
-            raise typer.Exit(1)
+            raise click.Abort()
 
         skills = search_resp.json().get("skills", [])
         if not skills:
             console.print(f"[red]未找到技能: {name}[/red]")
-            raise typer.Exit(1)
+            raise click.Abort()
 
         skill = skills[0]
         skill_id = skill["id"]
@@ -438,7 +438,7 @@ def install(name, version):
             )
             if ver_resp.status_code != 200:
                 console.print(f"[red]版本不存在: {version}[/red]")
-                raise typer.Exit(1)
+                raise click.Abort()
             ver_data = ver_resp.json()
         else:
             versions_resp = client.get(
@@ -448,13 +448,14 @@ def install(name, version):
             versions = versions_resp.json().get("versions", [])
             if not versions:
                 console.print("[red]该技能没有版本记录[/red]")
-                raise typer.Exit(1)
+                raise click.Abort()
             ver_data = versions[0]
             version = ver_data["version"]
 
         console.print(f"[cyan]安装技能: {name} v{version}[/cyan]")
 
-        install_dir = Path.home() / ".aetherhub" / "skills" / name
+        safe_name = "".join(c if c.isalnum() or c in "._-" else "_" for c in name)
+        install_dir = Path.home() / ".aetherhub" / "skills" / safe_name / version
         install_dir.mkdir(parents=True, exist_ok=True)
 
         skill_data = client.get(
@@ -471,6 +472,8 @@ def install(name, version):
                 file_path = install_dir / f["filename"]
                 file_path.write_bytes(file_resp.content)
                 console.print(f"  [green]+[/green] {f['filename']}")
+            else:
+                console.print(f"  [red]下载失败: {f['filename']}[/red]")
 
         console.print(f"[green]安装完成: {install_dir}[/green]")
 
@@ -503,7 +506,7 @@ def search(query, limit):
     headers = get_auth_header()
     if not headers:
         console.print("[red]未登录，请运行: aetherhub login[/red]")
-        raise typer.Exit(1)
+        raise click.Abort()
 
     with httpx.Client() as client:
         resp = client.get(
@@ -514,7 +517,7 @@ def search(query, limit):
 
     if resp.status_code == 401:
         console.print("[red]认证失败，请重新登录: aetherhub login[/red]")
-        raise typer.Exit(1)
+        raise click.Abort()
 
     data = resp.json()
     skills = data.get("skills", [])
