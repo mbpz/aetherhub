@@ -1,4 +1,4 @@
-"""Codex 代码生成引擎 - 真实 API 实现"""
+"""Codex 代码生成引擎 - DeepSeek API 实现"""
 import os
 from typing import Dict, Any, Optional, List
 
@@ -6,6 +6,10 @@ try:
     from openai import OpenAI
 except ImportError:
     OpenAI = None
+
+# DeepSeek 配置
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 
 
 SYSTEM_PROMPT = """你是一个安全的代码生成助手，专门生成 Python 技能代码。
@@ -42,16 +46,18 @@ USER_PROMPT_TEMPLATE = """根据以下意图生成 Python 代码：
 class CodexEngine:
     """Codex 代码生成引擎"""
 
-    def __init__(self, model: str = "gpt-4o"):
-        self.model = model
+    def __init__(self, model: str = None):
+        self.model = model or DEEPSEEK_MODEL
         self.client = None
         self._init_client()
 
     def _init_client(self):
-        """初始化 OpenAI 客户端"""
-        api_key = os.getenv("OPENAI_API_KEY")
-        if api_key and OpenAI:
-            self.client = OpenAI(api_key=api_key)
+        """初始化 DeepSeek 客户端"""
+        if DEEPSEEK_API_KEY and OpenAI:
+            self.client = OpenAI(
+                api_key=DEEPSEEK_API_KEY,
+                base_url="https://api.deepseek.com"
+            )
 
     def generate(self, prompt: str, max_tokens: int = 4096) -> Dict[str, Any]:
         """
