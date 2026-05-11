@@ -15,6 +15,7 @@ from .routes import audit as audit_router
 from .routes import templates as templates_router
 from .routes import users as users_router
 from .routes import rtk as rtk_router
+from .routes import github_importer as github_router
 
 
 @asynccontextmanager
@@ -62,6 +63,7 @@ app.include_router(audit_router.router, prefix="/api/v1")
 app.include_router(templates_router.router, prefix="/api/v1")
 app.include_router(users_router.router, prefix="/api/v1")
 app.include_router(rtk_router.router, prefix="/api/v1")
+app.include_router(github_router.router, prefix="/api/v1")
 
 
 @app.get("/")

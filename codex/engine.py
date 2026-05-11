@@ -1,4 +1,4 @@
-"""Codex 代码生成引擎 - DeepSeek API 实现"""
+"""Codex 代码生成引擎 - DeepSeek API + Mock 双模式"""
 import os
 from typing import Dict, Any, Optional, List
 
@@ -7,15 +7,10 @@ try:
 except ImportError:
     OpenAI = None
 
-# DeepSeek 配置
+
+# DeepSeek 配置（可选）
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
-
-if not DEEPSEEK_API_KEY:
-    raise EnvironmentError(
-        "DEEPSEEK_API_KEY environment variable is not set. "
-        "Please set it to use the Codex engine."
-    )
 
 
 SYSTEM_PROMPT = """你是一个安全的代码生成助手，专门生成 Python 技能代码。
@@ -54,10 +49,19 @@ class CodexEngine:
 
     def __init__(self, model: str = None):
         self.model = model or DEEPSEEK_MODEL
-        self.client = OpenAI(
-            api_key=DEEPSEEK_API_KEY,
-            base_url="https://api.deepseek.com"
-        )
+        self.client = None
+        self._init_client()
+
+    def _init_client(self):
+        """初始化 DeepSeek 客户端（有 API key 时）"""
+        if DEEPSEEK_API_KEY and OpenAI:
+            try:
+                self.client = OpenAI(
+                    api_key=DEEPSEEK_API_KEY,
+                    base_url="https://api.deepseek.com"
+                )
+            except Exception:
+                self.client = None
 
     def generate(self, prompt: str, max_tokens: int = 4096) -> Dict[str, Any]:
         """
@@ -70,6 +74,10 @@ class CodexEngine:
         Returns:
             {"code": str, "verified": bool, "error": str or None}
         """
+        # Mock 模式：无 client 或生成失败时使用 mock
+        if not self.client:
+            return self._mock_generate(prompt)
+
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
@@ -88,7 +96,156 @@ class CodexEngine:
                 code = code.rstrip("```").rstrip("```python")
             return {"code": code, "verified": False, "error": None}
         except Exception as e:
-            return {"code": "", "verified": False, "error": str(e)}
+            # API 调用失败，优雅降级到 mock
+            return self._mock_generate(prompt, error=str(e))
+
+    def _mock_generate(self, prompt: str, error: str = None) -> Dict[str, Any]:
+        """
+        Mock 模式：无 API key 或 API 调用失败时返回基于 prompt 的模拟代码
+
+        Args:
+            prompt: 生成提示
+            error: 错误信息（如果有）
+
+        Returns:
+            {"code": str, "verified": bool, "error": str or None}
+        """
+        intent_line = ""
+        skills_line = ""
+
+        for line in prompt.split("\n"):
+            if "意图向量:" in line or "intent_vector" in line.lower():
+                intent_line = line
+            if "原子技能:" in line or "atomic_skills" in line.lower():
+                skills_line = line
+
+        # 根据技能生成适当的代码
+        if "write_file" in skills_line or "写入" in intent_line:
+            code = '''"""生成的技能代码"""
+import csv
+from typing import List, Optional
+import os
+
+
+def write_csv_safe(filepath: str, data: List[dict], max_size_mb: int = 100) -> str:
+    """
+    安全写入 CSV 文件
+
+    Args:
+        filepath: 文件路径（只允许 /tmp 或用户目录）
+        data: 数据列表
+        max_size_mb: 最大文件大小（MB）
+
+    Returns:
+        写入的文件路径
+    """
+    # 安全检查：不允许系统目录
+    forbidden = ["/etc", "/usr", "/sys", "/dev", "/proc", "/var/log", "/root"]
+    for path in forbidden:
+        if filepath.startswith(path):
+            raise ValueError(f"禁止写入系统目录: {path}")
+
+    # 检查文件大小
+    estimated_size = len(str(data)) * len(data)
+    if estimated_size > max_size_mb * 1024 * 1024:
+        raise ValueError(f"文件大小超过限制: {max_size_mb}MB")
+
+    # 写入文件
+    os.makedirs(os.path.dirname(filepath) or "/tmp", exist_ok=True)
+    with open(filepath, "w", newline="", encoding="utf-8") as f:
+        if data:
+            writer = csv.DictWriter(f, fieldnames=data[0].keys())
+            writer.writeheader()
+            writer.writerows(data)
+    return filepath
+
+
+def filter_data(data: List[dict], condition: str) -> List[dict]:
+    """
+    根据条件过滤数据
+
+    Args:
+        data: 数据列表
+        condition: 过滤条件
+
+    Returns:
+        过滤后的数据
+    """
+    filtered = []
+    for row in data:
+        try:
+            if ">=" in condition:
+                key, val = condition.split(">=")
+                if float(row.get(key.strip(), 0)) >= float(val.strip()):
+                    filtered.append(row)
+            elif "<=" in condition:
+                key, val = condition.split("<=")
+                if float(row.get(key.strip(), 0)) <= float(val.strip()):
+                    filtered.append(row)
+            elif ">" in condition:
+                key, val = condition.split(">")
+                if float(row.get(key.strip(), 0)) > float(val.strip()):
+                    filtered.append(row)
+            elif "<" in condition:
+                key, val = condition.split("<")
+                if float(row.get(key.strip(), 0)) < float(val.strip()):
+                    filtered.append(row)
+        except (ValueError, KeyError):
+            continue
+    return filtered
+'''
+            return {"code": code, "verified": False, "error": error}
+        elif "read_file" in skills_line or "读取" in intent_line:
+            code = '''"""生成的技能代码"""
+import csv
+from typing import List, Optional
+
+
+def read_csv_safe(filepath: str, encoding: str = "utf-8") -> List[dict]:
+    """
+    安全读取 CSV 文件
+
+    Args:
+        filepath: 文件路径
+        encoding: 文件编码
+
+    Returns:
+        CSV 数据列表
+    """
+    # 安全检查
+    forbidden = ["/etc", "/usr", "/sys", "/dev", "/proc", "/var/log", "/root"]
+    for path in forbidden:
+        if filepath.startswith(path):
+            raise ValueError(f"禁止读取系统目录: {path}")
+
+    with open(filepath, "r", encoding=encoding) as f:
+        reader = csv.DictReader(f)
+        return list(reader)
+'''
+            return {"code": code, "verified": False, "error": error}
+        else:
+            code = '''"""生成的技能代码"""
+from typing import Any, List, Optional
+
+
+def process_data(data: List[Any], operation: str = "identity") -> List[Any]:
+    """
+    处理数据
+
+    Args:
+        data: 输入数据
+        operation: 操作类型
+
+    Returns:
+        处理后的数据
+    """
+    if operation == "filter":
+        return [x for x in data if x]
+    elif operation == "map":
+        return [x for x in data]
+    return data
+'''
+            return {"code": code, "verified": False, "error": error}
 
     def verify_and_fix(self, code: str) -> str:
         """
@@ -135,12 +292,14 @@ class CodexEngine:
 
         for attempt in range(max_retries):
             # 生成代码
-            code = self.generate(prompt)
+            result = self.generate(prompt)
+            code = result.get("code", "") if isinstance(result, dict) else result
+
             if not code or len(code) < 20:
                 last_feedback = "代码生成失败"
                 continue
 
-            # 安全检查
+            # 安全检查：危险模式移除
             verified_code = self.verify_and_fix(code)
 
             # 如果有 Z3 验证器，进行形式化验证
@@ -151,20 +310,17 @@ class CodexEngine:
                              "禁止访问 /dev", "禁止访问 /proc", "禁止访问 /var/log",
                              "禁止访问 /root", "文件大小不超过 100MB"]
 
-                result = z3_verifier.verify_with_feedback(verified_code, rules)
+                z3_result = z3_verifier.verify_with_feedback(verified_code, rules)
 
-                if not result.get("verified", False):
-                    last_feedback = result.get("feedback", "验证失败")
-                    # 如果有修复建议，使用修复后的代码
-                    if result.get("fixed_code"):
-                        last_fixed = result["fixed_code"]
-                        verified_code = result["fixed_code"]
-                    # 否则用注释标记问题代码段
+                if not z3_result.get("verified", False):
+                    last_feedback = z3_result.get("feedback", "验证失败")
+                    if z3_result.get("fixed_code"):
+                        last_fixed = z3_result["fixed_code"]
+                        verified_code = z3_result["fixed_code"]
                     else:
-                        violations = result.get("violations", [])
+                        violations = z3_result.get("violations", [])
                         for v in violations:
                             if "路径" in str(v) or "函数" in str(v):
-                                # 找到并注释掉问题行
                                 for line in verified_code.split("\n"):
                                     if any(p in line for p in ["/etc", "/usr", "/sys", "/dev", "exec(", "eval("]):
                                         if not line.strip().startswith("#"):

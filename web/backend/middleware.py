@@ -1,11 +1,28 @@
 """
 AetherHub 中间件：Rate Limiting
 """
+import os
 import time
 from typing import Dict, Tuple
 from fastapi import Request, HTTPException
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+
+# 可配置的信任代理列表（IP 或 CIDR），仅当请求来自这些代理时才信任 X-Forwarded-For
+# 默认空列表 = 不信任任何代理，防止 IP 欺骗
+TRUSTED_PROXIES = set(
+    p.strip()
+    for p in os.getenv("TRUSTED_PROXIES", "").split(",")
+    if p.strip()
+)
+
+
+def _is_trusted_proxy(request: Request) -> bool:
+    """检查直连 IP 是否为信任的代理"""
+    if not TRUSTED_PROXIES:
+        return False
+    client_ip = request.client.host if request.client else None
+    return client_ip in TRUSTED_PROXIES
 
 
 class TokenBucket:
@@ -54,31 +71,24 @@ _anonymous_limiter = TokenBucket(rate=20, per_seconds=60)
 
 
 def get_client_key(request: Request) -> str:
-    """获取客户端标识 key"""
-    # 仅在请求来自已知代理时信任 X-Forwarded-For
-    # 否则使用 client.host（无法伪造）
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        # 检查是否是私有/内网IP，如果是则信任，否则忽略
-        first_ip = forwarded.split(",")[0].strip()
-        if _is_private_ip(first_ip):
-            return first_ip
-    real_ip = request.headers.get("x-real-ip")
-    if real_ip and _is_private_ip(real_ip):
-        return real_ip
+    """获取客户端标识 key
+
+    安全性：仅在 TRUSTED_PROXIES 配置了直连代理 IP 时才信任 X-Forwarded-For。
+    未配置代理时，始终使用 request.client.host（无法被客户端伪造）。
+    """
+    if _is_trusted_proxy(request):
+        # 来自信任的代理，解析 X-Forwarded-For
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+        real_ip = request.headers.get("x-real-ip")
+        if real_ip:
+            return real_ip
+
+    # 直连客户端或未配置代理：使用无法伪造的 connection IP
     if request.client:
         return request.client.host
     return "unknown"
-
-
-def _is_private_ip(ip: str) -> bool:
-    """检查是否是私有/内网IP段"""
-    import ipaddress
-    try:
-        addr = ipaddress.ip_address(ip)
-        return addr.is_private or addr.is_loopback or addr.is_reserved
-    except Exception:
-        return False
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
