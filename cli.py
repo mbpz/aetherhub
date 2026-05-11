@@ -16,6 +16,7 @@ from typing import Optional
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import click
+import httpx
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -317,6 +318,86 @@ def status():
     exp = datetime.fromtimestamp(creds['expires_at'])
     console.print(f"[green]已登录: {creds['user']['username']}[/green]")
     console.print(f"Token 过期时间: {exp}")
+
+
+@main.command()
+@click.argument("path", type=click.Path(exists=True))
+def upload(path):
+    """上传本地技能目录到市场"""
+    skill_path = Path(path)
+
+    skill_md = skill_path / "SKILL.md"
+    if not skill_md.exists():
+        console.print("[red]未找到 SKILL.md 文件[/red]")
+        raise click.Abort()
+
+    with open(skill_md) as f:
+        content = f.read()
+
+    allowed_exts = {".py", ".md", ".txt", ".json", ".yaml", ".yml", ".toml"}
+    files = []
+    for f in skill_path.iterdir():
+        if f.is_file() and f.suffix in allowed_exts:
+            files.append(f)
+
+    console.print(f"[cyan]上传技能: {skill_path.name}[/cyan]")
+    console.print(f"[cyan]文件数: {len(files)}[/cyan]")
+
+    API_BASE = os.getenv("AETHERHUB_API_URL", "http://localhost:8000/api")
+
+    headers = get_auth_header()
+    if not headers:
+        console.print("[red]未登录，请运行: aetherhub login[/red]")
+        raise click.Abort()
+    headers["Content-Type"] = "application/json"
+
+    import httpx
+    with httpx.Client() as client:
+        resp = client.post(
+            f"{API_BASE}/skills",
+            json={
+                "name": skill_path.name,
+                "description": content.split("\n")[0][:200],
+                "skill_md": content,
+            },
+            headers=headers,
+        )
+        if resp.status_code == 401:
+            console.print("[red]认证失败，请重新登录: aetherhub login[/red]")
+            raise click.Abort()
+        if resp.status_code not in (200, 201):
+            console.print(f"[red]创建技能失败: {resp.text}[/red]")
+            raise click.Abort()
+
+        skill = resp.json()
+        console.print(f"[green]技能创建成功: {skill['id']}[/green]")
+
+        for f in files:
+            with open(f, "rb") as fp:
+                files_data = {"file": (f.name, fp.read())}
+                file_resp = client.post(
+                    f"{API_BASE}/skills/{skill['id']}/files",
+                    files=files_data,
+                    headers={"Authorization": headers["Authorization"]},
+                )
+                if file_resp.status_code == 200:
+                    console.print(f"  [green]+[/green] {f.name}")
+                else:
+                    console.print(f"  [red]-[/red] {f.name}")
+
+    console.print("[green]上传完成![/green]")
+
+
+@main.command()
+def publish():
+    """在当前目录发布技能（发现 SKILL.md）"""
+    ctx = click.get_current_context()
+    skill_path = Path(".")
+    skill_md = skill_path / "SKILL.md"
+    if not skill_md.exists():
+        console.print("[red]未找到 SKILL.md 文件，请确保在技能目录内运行[/red]")
+        raise click.Abort()
+    ctx.invoke(upload, path=str(skill_path.absolute()))
 
 
 if __name__ == "__main__":
