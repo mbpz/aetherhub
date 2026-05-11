@@ -1,3 +1,4 @@
+import asyncio
 import os
 import shutil
 from abc import ABC, abstractmethod
@@ -31,19 +32,19 @@ class LocalStorage(StorageService):
 
     async def upload_file(self, local_path: str, remote_key: str) -> str:
         dest = self._resolve(remote_key)
-        os.makedirs(os.path.dirname(dest), exist_ok=True)
-        shutil.copy2(local_path, dest)
+        await asyncio.to_thread(os.makedirs, os.path.dirname(dest), exist_ok=True)
+        await asyncio.to_thread(shutil.copy2, local_path, dest)
         return dest
 
     async def download_file(self, remote_key: str, local_path: str) -> None:
         src = self._resolve(remote_key)
-        os.makedirs(os.path.dirname(local_path), exist_ok=True)
-        shutil.copy2(src, local_path)
+        await asyncio.to_thread(os.makedirs, os.path.dirname(local_path), exist_ok=True)
+        await asyncio.to_thread(shutil.copy2, src, local_path)
 
     async def delete_file(self, remote_key: str) -> None:
         path = self._resolve(remote_key)
         if os.path.exists(path):
-            os.remove(path)
+            await asyncio.to_thread(os.remove, path)
 
     def get_url(self, remote_key: str, expires: int = 3600) -> str:
         return self._resolve(remote_key)
@@ -53,6 +54,8 @@ class S3Storage(StorageService):
     def __init__(self, bucket: str, region: str = "us-east-1",
                  access_key: Optional[str] = None,
                  secret_key: Optional[str] = None):
+        if not bucket:
+            raise ValueError("AETHERHUB_S3_BUCKET must be set when using S3 backend")
         self.bucket = bucket
         import boto3
         self._client = boto3.client(
@@ -63,15 +66,21 @@ class S3Storage(StorageService):
         )
 
     async def upload_file(self, local_path: str, remote_key: str) -> str:
-        self._client.upload_file(local_path, self.bucket, remote_key)
+        await asyncio.to_thread(
+            self._client.upload_file, local_path, self.bucket, remote_key
+        )
         return f"s3://{self.bucket}/{remote_key}"
 
     async def download_file(self, remote_key: str, local_path: str) -> None:
-        os.makedirs(os.path.dirname(local_path), exist_ok=True)
-        self._client.download_file(self.bucket, remote_key, local_path)
+        await asyncio.to_thread(os.makedirs, os.path.dirname(local_path), exist_ok=True)
+        await asyncio.to_thread(
+            self._client.download_file, self.bucket, remote_key, local_path
+        )
 
     async def delete_file(self, remote_key: str) -> None:
-        self._client.delete_object(Bucket=self.bucket, Key=remote_key)
+        await asyncio.to_thread(
+            self._client.delete_object, Bucket=self.bucket, Key=remote_key
+        )
 
     def get_url(self, remote_key: str, expires: int = 3600) -> str:
         return self._client.generate_presigned_url(
@@ -91,3 +100,8 @@ def get_storage() -> StorageService:
             secret_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
         )
     return LocalStorage(base_dir=os.getenv("AETHERHUB_UPLOAD_DIR", "uploads"))
+
+
+# TODO: Integrate into web/backend/routes/skills.py
+# from .services.storage import get_storage
+# storage = get_storage()
