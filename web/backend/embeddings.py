@@ -9,23 +9,27 @@ EMBEDDING_DIM = 768
 
 
 class EmbeddingService:
-    """轻量级嵌入服务，使用 CPU-optimized 模型"""
+    """轻量级嵌入服务，支持通过 EMBEDDING_MODEL env var 配置模型"""
 
-    _instance = None
     _model = None
 
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
+        self._model_name = model_name
+        # Only load model once (on first instance)
+        if EmbeddingService._model is None:
+            self._load_model()
+
+    @property
+    def model_name(self) -> str:
+        return self._model_name
 
     def _load_model(self):
         """延迟加载模型"""
         if EmbeddingService._model is None:
             try:
                 from sentence_transformers import SentenceTransformer
-                # 使用轻量级 CPU 模型
-                EmbeddingService._model = SentenceTransformer("all-MiniLM-L6-v2")
+                # Use the configured model name
+                EmbeddingService._model = SentenceTransformer(self._model_name)
             except ImportError:
                 EmbeddingService._model = None
         return EmbeddingService._model
@@ -51,8 +55,21 @@ class EmbeddingService:
         return float(np.dot(vec1, vec2) / (norm1 * norm2))
 
 
+_embedding_service = None
+
+
 def get_embedding_service() -> EmbeddingService:
-    return EmbeddingService()
+    """Get or create embedding service (lazy initialization, respects EMBEDDING_MODEL env var)"""
+    global _embedding_service
+    if _embedding_service is None:
+        model_name = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+        _embedding_service = EmbeddingService(model_name)
+    return _embedding_service
+
+
+def get_embedding(text: str) -> list:
+    """Convenience wrapper: encode a single text string"""
+    return get_embedding_service().encode(text)
 
 
 def text_to_embedding(text: str) -> bytes:

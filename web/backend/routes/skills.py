@@ -17,9 +17,10 @@ import numpy as np
 
 from ..deps import get_db, get_optional_user, require_user
 from ..models import Skill, SkillFile, SkillStar, User, SkillVersion, SkillModeration
-from ..embeddings import text_to_embedding, cosine_similarity, rrf_fusion
+from ..embeddings import text_to_embedding, cosine_similarity, rrf_fusion, get_embedding
 from ..database import engine, rebuild_fts_index
 from ..middleware import log_audit
+from ..services.storage import get_storage
 
 router = APIRouter(prefix="/skills", tags=["skills"])
 

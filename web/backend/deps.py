@@ -1,18 +1,19 @@
 """
-FastAPI 依赖注入：数据库 Session + 当前用户
+FastAPI 依赖注入：数据库 Session + 当前用户 + Embedding 服务
 """
 from typing import Optional, Generator
 from fastapi import Depends, HTTPException, Header
 from sqlalchemy.orm import Session
 
-from .database import SessionLocal
+from .database import get_session
 from .models import User
 from .auth import decode_jwt
+from .embeddings import EmbeddingService, get_embedding_service
 
 
 def get_db() -> Generator[Session, None, None]:
     """获取数据库 Session（依赖注入）"""
-    db = SessionLocal()
+    db = get_session()
     try:
         yield db
     finally:
@@ -47,3 +48,8 @@ def require_user(
             detail={"code": 4001, "message": "Unauthorized", "data": None},
         )
     return user
+
+
+def get_embedding_svc() -> EmbeddingService:
+    """Embedding 服务依赖注入"""
+    return get_embedding_service()
