@@ -3,6 +3,8 @@ from typing import Dict, Any, Optional
 import os
 import tempfile
 import time
+import signal
+import resource
 
 try:
     import wasmtime  # noqa: F401
@@ -199,7 +201,8 @@ class WasmtimeSandbox:
         """
         # 检查内存使用
         memory_mb = result.get("memory_usage_mb", 0)
-        if memory_mb > self.memory_limit / (1024 * 1024):
+        limit_mb = self.memory_limit / (1024 * 1024)
+        if memory_mb > limit_mb:
             return False
 
         # 检查执行时间
