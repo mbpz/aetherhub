@@ -1,7 +1,9 @@
 """Z3 形式化验证器 - 完整实现"""
 from typing import Dict, Any, List, Optional
+import z3
 from z3 import Solver, Int, sat, unsat, And, Or, Implies, Bool, Not, Z3Exception
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 from .tree_sitter_parser import (
     code_to_ast,
@@ -20,8 +22,19 @@ from .rules import (
 class Z3Verifier:
     """Z3 形式化验证器"""
 
+    # Thread-local storage for Z3 contexts (Z3 4.16 requires isolated contexts per thread)
+    _thread_local = threading.local()
+
     def __init__(self, timeout: int = 30):
         self.timeout = timeout
+
+    def _get_thread_solver(self) -> Solver:
+        """Get a Z3 solver with thread-isolated context for Z3 4.16 thread safety"""
+        thread_id = threading.current_thread().name
+        if not hasattr(self._thread_local, 'context') or self._thread_local.context is None:
+            # Create isolated Z3 context for this thread
+            self._thread_local.context = z3.Context()
+        return Solver(ctx=self._thread_local.context)
 
     def verify(self, code: str, constraints: List[str], parallel: bool = True) -> Dict[str, Any]:
         """
@@ -30,7 +43,7 @@ class Z3Verifier:
         Args:
             code: 待验证代码
             constraints: 安全约束列表
-            parallel: 是否启用并行验证（默认关闭，Z3 4.16 在多线程下存在 C++ assertion bug）
+            parallel: 是否启用并行验证（Z3 4.16 通过线程隔离 Context 实现线程安全）
 
         Returns:
             验证结果
@@ -64,12 +77,14 @@ class Z3Verifier:
             }
 
         # 3. 代码层面检查通过，Z3 形式化验证（确保代码逻辑没有漏洞）
-        # 注意：Z3 4.16 的 C++ 核心在多线程环境下存在 assertion bug，
-        # 因此始终使用串行验证以避免 SIGSEGV
+        # 使用并行或串行验证（Z3 4.16 通过隔离 Context 实现线程安全）
         formula = self.extract_logic_formula(code)
         rules = self.define_security_rules(constraints)
 
-        return self._verify_sequential(code, formula, rules, constraints, code_path_result)
+        if parallel:
+            return self._verify_parallel(code, formula, rules, constraints, code_path_result)
+        else:
+            return self._verify_sequential(code, formula, rules, constraints, code_path_result)
 
     def _verify_parallel(
         self,
@@ -133,9 +148,9 @@ class Z3Verifier:
         }
 
     def _verify_single_rule(self, code: str, formula, rule) -> Dict[str, Any]:
-        """验证单个规则"""
+        """验证单个规则（使用线程隔离的 Z3 Context）"""
         try:
-            solver = Solver()
+            solver = self._get_thread_solver()
             solver.set("timeout", self.timeout * 1000)
 
             if formula is not None:
