@@ -407,21 +407,30 @@ async def get_skill_file(
     if not file_record:
         return err_response(4004, "File not found", 404)
 
-    file_path = file_record.file_path
-    if not os.path.exists(file_path):
-        return err_response(4004, "File not found on disk", 404)
+    storage = get_storage()
+    remote_key = f"skills/{skill_id}/{filename}"
 
     # Return text content for text-like files
     try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            content = f.read()
+        # Download to temp file for content extraction
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            await storage.download_file(remote_key, tmp_path)
+            with open(tmp_path, "r", encoding="utf-8") as f:
+                content = f.read()
+        finally:
+            os.unlink(tmp_path)
         # 记录审计日志
         log_audit(db, None, "skill_download", "skill_file", file_record.id, details={"skill_id": skill_id, "filename": filename})
         return PlainTextResponse(content)
     except UnicodeDecodeError:
+        # For binary files, use storage URL
+        url = storage.get_url(remote_key)
         # 记录审计日志
         log_audit(db, None, "skill_download", "skill_file", file_record.id, details={"skill_id": skill_id, "filename": filename})
-        return FileResponse(file_path)
+        return FileResponse(url if os.path.exists(url) else tmp_path)
 
 
 @router.post("")
@@ -568,10 +577,12 @@ async def delete_skill(
     if skill.author_id != current_user.id:
         return err_response(4003, "Forbidden: You can only delete your own skills", 403)
 
-    # 删除文件
-    skill_upload_dir = os.path.join(UPLOAD_DIR, str(skill_id))
-    if os.path.exists(skill_upload_dir):
-        shutil.rmtree(skill_upload_dir)
+    # 删除文件 via StorageService
+    storage = get_storage()
+    skill_files = db.query(SkillFile).filter(SkillFile.skill_id == skill_id).all()
+    for sf in skill_files:
+        remote_key = f"skills/{skill_id}/{sf.filename}"
+        await storage.delete_file(remote_key)
 
     db.delete(skill)
     db.commit()
