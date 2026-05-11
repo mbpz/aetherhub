@@ -30,7 +30,7 @@ class Z3Verifier:
         Args:
             code: 待验证代码
             constraints: 安全约束列表
-            parallel: 是否启用并行验证（默认开启）
+            parallel: 是否启用并行验证（默认关闭，Z3 4.16 在多线程下存在 C++ assertion bug）
 
         Returns:
             验证结果
@@ -64,14 +64,12 @@ class Z3Verifier:
             }
 
         # 3. 代码层面检查通过，Z3 形式化验证（确保代码逻辑没有漏洞）
+        # 注意：Z3 4.16 的 C++ 核心在多线程环境下存在 assertion bug，
+        # 因此始终使用串行验证以避免 SIGSEGV
         formula = self.extract_logic_formula(code)
         rules = self.define_security_rules(constraints)
 
-        # 并行验证：当有多个规则且启用并行时
-        if parallel and len(rules) > 1:
-            return self._verify_parallel(code, formula, rules, constraints, code_path_result)
-        else:
-            return self._verify_sequential(code, formula, rules, constraints, code_path_result)
+        return self._verify_sequential(code, formula, rules, constraints, code_path_result)
 
     def _verify_parallel(
         self,
