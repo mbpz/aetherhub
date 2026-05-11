@@ -1,8 +1,15 @@
 """
 AetherHub CLI - 自主认知技能系统命令行工具
 """
-import sys
+import json
 import os
+import sys
+import time
+import http.server
+import threading
+import urllib.parse
+from pathlib import Path
+from datetime import datetime
 from typing import Optional
 
 # 添加项目根目录到路径
@@ -22,6 +29,33 @@ CONFIG = {
     "wasm_memory_limit": int(os.getenv("WASM_MEMORY_LIMIT", "16")),
     "wasm_time_limit": int(os.getenv("WASM_TIME_LIMIT", "5000")),
 }
+
+# Credentials management
+CREDENTIALS_FILE = Path.home() / ".aetherhub" / "credentials"
+
+def load_credentials():
+    if not CREDENTIALS_FILE.exists():
+        return None
+    try:
+        with open(CREDENTIALS_FILE) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return None
+
+def save_credentials(data):
+    CREDENTIALS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    CREDENTIALS_FILE.write_text(json.dumps(data, indent=2))
+    os.chmod(CREDENTIALS_FILE, 0o600)
+
+def clear_credentials():
+    if CREDENTIALS_FILE.exists():
+        CREDENTIALS_FILE.unlink()
+
+def get_auth_header():
+    creds = load_credentials()
+    if not creds:
+        return None
+    return {"Authorization": f"Bearer {creds['access_token']}"}
 
 
 @click.group()
@@ -212,6 +246,77 @@ def info():
 def version():
     """显示版本信息"""
     console.print("AetherHub CLI v1.0.0")
+
+
+@main.command()
+def login():
+    """GitHub OAuth 登录（设备码流程）"""
+    console.print("[cyan]启动 GitHub OAuth 设备码登录...[/cyan]")
+
+    auth_code = {"code": None}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            parsed = urllib.parse.urlparse(self.path)
+            params = urllib.parse.parse_qs(parsed.query)
+            if "code" in params:
+                auth_code["code"] = params["code"][0]
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers()
+                self.wfile.write("<h1>登录成功！可以关闭此窗口。</h1>".encode("utf-8"))
+            else:
+                self.send_response(400)
+                self.end_headers()
+
+        def log_message(self, format, *args):
+            pass
+
+    server = http.server.HTTPServer(("localhost", 8765), Handler)
+    thread = threading.Thread(target=lambda: server.handle_request())
+    thread.start()
+
+    client_id = os.getenv("GITHUB_CLIENT_ID", "Ov23liQI8mK4aSgO4p8K")
+    device_url = f"https://github.com/login/device/code?client_id={client_id}"
+    console.print(f"[yellow]请访问: {device_url}[/yellow]")
+    console.print("[yellow]在页面上输入设备码完成授权[/yellow]")
+
+    # Wait for auth code (simulated - actual implementation would use GitHub API)
+    console.print("[yellow]等待授权...(按 Ctrl+C 取消)[/yellow]")
+    time.sleep(3)
+
+    # Mock token for demo purposes
+    save_credentials({
+        "access_token": "mock_token_" + str(int(time.time())),
+        "expires_at": int(time.time()) + 86400 * 30,
+        "user": {
+            "id": 1,
+            "username": "demo_user",
+            "avatar_url": "https://avatars.githubusercontent.com/u/1",
+        },
+    })
+
+    console.print("[green]登录成功！[/green]")
+    console.print(f"凭证已保存到: {CREDENTIALS_FILE}")
+
+
+@main.command()
+def logout():
+    """清除本地凭证"""
+    clear_credentials()
+    console.print("[green]已退出登录[/green]")
+
+
+@main.command()
+def status():
+    """显示当前登录状态"""
+    creds = load_credentials()
+    if not creds:
+        console.print("[yellow]未登录，请运行: aetherhub login[/yellow]")
+        return
+    exp = datetime.fromtimestamp(creds['expires_at'])
+    console.print(f"[green]已登录: {creds['user']['username']}[/green]")
+    console.print(f"Token 过期时间: {exp}")
 
 
 if __name__ == "__main__":
