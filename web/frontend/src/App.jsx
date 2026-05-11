@@ -9,6 +9,7 @@ import SkillSquarePage from './pages/SkillSquarePage'
 import SkillDetailPage from './pages/SkillDetailPage'
 import MySkillsPage from './pages/MySkillsPage'
 import UploadSkillPage from './pages/UploadSkillPage'
+import SkillVersionsPage from './pages/SkillVersionsPage'
 
 function Layout({ children }) {
   return (
@@ -39,6 +40,7 @@ export default function App() {
           </ProtectedRoute>
         } />
         <Route path="/skills/:id" element={<Layout><SkillDetailPage /></Layout>} />
+        <Route path="/skills/:skillId/versions" element={<Layout><SkillVersionsPage /></Layout>} />
 
         <Route path="/mine" element={
           <ProtectedRoute>
