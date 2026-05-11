@@ -400,5 +400,133 @@ def publish():
     ctx.invoke(upload, path=str(skill_path.absolute()))
 
 
+@main.command()
+@click.argument("name")
+@click.option("--version", "-v", default=None, help="指定版本")
+def install(name, version):
+    """从市场下载技能到本地（默认最新版本）"""
+    import httpx
+    API_BASE = os.getenv("AETHERHUB_API_URL", "http://localhost:8000/api")
+
+    headers = get_auth_header()
+    if not headers:
+        console.print("[red]未登录，请运行: aetherhub login[/red]")
+        raise typer.Exit(1)
+
+    with httpx.Client() as client:
+        search_resp = client.get(
+            f"{API_BASE}/skills",
+            params={"q": name, "limit": 1},
+            headers=headers,
+        )
+        if search_resp.status_code == 401:
+            console.print("[red]认证失败，请重新登录: aetherhub login[/red]")
+            raise typer.Exit(1)
+
+        skills = search_resp.json().get("skills", [])
+        if not skills:
+            console.print(f"[red]未找到技能: {name}[/red]")
+            raise typer.Exit(1)
+
+        skill = skills[0]
+        skill_id = skill["id"]
+
+        if version:
+            ver_resp = client.get(
+                f"{API_BASE}/skills/{skill_id}/versions/{version}",
+                headers=headers,
+            )
+            if ver_resp.status_code != 200:
+                console.print(f"[red]版本不存在: {version}[/red]")
+                raise typer.Exit(1)
+            ver_data = ver_resp.json()
+        else:
+            versions_resp = client.get(
+                f"{API_BASE}/skills/{skill_id}/versions",
+                headers=headers,
+            )
+            versions = versions_resp.json().get("versions", [])
+            if not versions:
+                console.print("[red]该技能没有版本记录[/red]")
+                raise typer.Exit(1)
+            ver_data = versions[0]
+            version = ver_data["version"]
+
+        console.print(f"[cyan]安装技能: {name} v{version}[/cyan]")
+
+        install_dir = Path.home() / ".aetherhub" / "skills" / name
+        install_dir.mkdir(parents=True, exist_ok=True)
+
+        skill_data = client.get(
+            f"{API_BASE}/skills/{skill_id}",
+            headers=headers,
+        ).json()
+
+        for f in skill_data.get("files", []):
+            file_resp = client.get(
+                f"{API_BASE}/skills/{skill_id}/files/{f['filename']}",
+                headers=headers,
+            )
+            if file_resp.status_code == 200:
+                file_path = install_dir / f["filename"]
+                file_path.write_bytes(file_resp.content)
+                console.print(f"  [green]+[/green] {f['filename']}")
+
+        console.print(f"[green]安装完成: {install_dir}[/green]")
+
+
+@main.command(name="list")
+def list_installed():
+    """列出已安装到本地的技能"""
+    skills_dir = Path.home() / ".aetherhub" / "skills"
+    if not skills_dir.exists():
+        console.print("[yellow]暂无已安装技能[/yellow]")
+        return
+
+    for skill_dir in skills_dir.iterdir():
+        if skill_dir.is_dir():
+            skill_md = skill_dir / "SKILL.md"
+            if skill_md.exists():
+                console.print(f"[cyan]- {skill_dir.name}[/cyan]")
+            else:
+                console.print(f"[dim]- {skill_dir.name} (无 SKILL.md)[/dim]")
+
+
+@main.command()
+@click.argument("query")
+@click.option("--limit", "-n", default=10, help="结果数量")
+def search(query, limit):
+    """搜索市场技能"""
+    import httpx
+    API_BASE = os.getenv("AETHERHUB_API_URL", "http://localhost:8000/api")
+
+    headers = get_auth_header()
+    if not headers:
+        console.print("[red]未登录，请运行: aetherhub login[/red]")
+        raise typer.Exit(1)
+
+    with httpx.Client() as client:
+        resp = client.get(
+            f"{API_BASE}/skills",
+            params={"q": query, "limit": limit},
+            headers=headers,
+        )
+
+    if resp.status_code == 401:
+        console.print("[red]认证失败，请重新登录: aetherhub login[/red]")
+        raise typer.Exit(1)
+
+    data = resp.json()
+    skills = data.get("skills", [])
+
+    if not skills:
+        console.print("[yellow]未找到匹配技能[/yellow]")
+        return
+
+    console.print(f"[cyan]找到 {len(skills)} 个技能:[/cyan]")
+    for s in skills:
+        console.print(f"  [green]{s['name']}[/green] - {s.get('description', '')[:60]}")
+
+
 if __name__ == "__main__":
     main()
