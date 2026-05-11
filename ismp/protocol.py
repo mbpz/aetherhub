@@ -83,23 +83,11 @@ class ISMPProtocol:
             if attempt < max_attempts - 1:
                 continue
 
-        # 所有尝试都失败，返回兜底代码
-        return self._fallback_code(intent_vector, atomic_skills)
-
-    def _fallback_code(self, intent_vector: Dict[str, Any],
-                       atomic_skills: List[str]) -> str:
-        """兜底代码生成"""
-        return f'''"""生成的技能代码 - 回退模式"""
-from typing import Any, List
-
-
-def process_data(data: List[Any]) -> List[Any]:
-    """
-    处理数据（意图: {intent_vector.get("raw_intent", "unknown")}）
-    技能: {atomic_skills}
-    """
-    return data if data else []
-'''
+        # All attempts failed - raise error instead of returning mock
+        raise RuntimeError(
+            f"Codex failed to generate code after {max_attempts} attempts. "
+            f"Last error: {last_error}. Ensure Codex engine is available."
+        )
 
     def _pack_artifact(self, intent_vector: Dict[str, Any],
                        atomic_skills: List[str], code: str,
